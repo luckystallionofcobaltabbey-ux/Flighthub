@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --font-brand: "Bebas Neue", "Plus Jakarta Sans", ui-sans-serif, sans-serif;
+  --font-display: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #141414;
+    color: #f4f4f5;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+}
+
+@keyframes gta-ken-burns {
+  0% {
+    transform: scale(1.02) translate3d(0, 0, 0);
+  }
+  100% {
+    transform: scale(1.1) translate3d(-1.5%, -1%, 0);
+  }
+}
+
+.animate-gta-pan {
+  animation: gta-ken-burns 8s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-gta-pan {
+    animation: none;
+  }
+}
