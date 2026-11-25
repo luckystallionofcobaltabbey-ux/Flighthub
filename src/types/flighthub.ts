@@ -88,4 +88,28 @@ export interface PassengerDraft {
   preference: SeatPreference;
 }
 
-export type WorkspaceTab = 'book' | 'view' | 'cancel' | 'fares' | 'seats';
+export type AppEventType =
+  | 'SESSION_BOOT'
+  | 'BOOKING_CREATED'
+  | 'PAYMENT_AUTHORIZED'
+  | 'PAYMENT_DECLINED'
+  | 'TICKET_CANCELLED'
+  | 'TICKET_SEARCHED'
+  | 'SAMPLE_DATA_LOADED'
+  | 'CABIN_RESET';
+
+export interface AppEventRecord {
+  id: string;
+  type: AppEventType;
+  timestamp: string;
+  summary: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type WorkspaceTab =
+  | 'book'
+  | 'view'
+  | 'cancel'
+  | 'fares'
+  | 'seats'
+  | 'developer';

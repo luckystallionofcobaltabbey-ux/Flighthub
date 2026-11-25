@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Grid3X3,
   ListChecks,
@@ -7,20 +7,25 @@ import {
   Play,
   PlusCircle,
   Search,
+  Terminal,
   Trash2,
   X,
 } from 'lucide-react';
 import { BookTicketView } from './components/BookTicketView';
 import { CabinSeatMapView } from './components/CabinSeatMapView';
 import { CancelTicketView } from './components/CancelTicketView';
+import { DeveloperPortalView } from './components/DeveloperPortalView';
 import { FlightFaresView } from './components/FlightFaresView';
 import { GtaLoadingScreen } from './components/GtaLoadingScreen';
 import { ViewTicketsView } from './components/ViewTicketsView';
 import {
   Airline,
+  AppEventRecord,
+  AppEventType,
   BookingRecord,
   PassengerDraft,
   PaymentDetails,
+  PaymentMethod,
   SeatRecord,
   WorkspaceTab,
 } from './types/flighthub';
@@ -33,13 +38,24 @@ import {
 
 const STORAGE_BOOKINGS_KEY = 'flighthub_bookings_v1';
 const STORAGE_SEATS_KEY = 'flighthub_seats_v1';
+const STORAGE_EVENTS_KEY = 'flighthub_events_v1';
+const MAX_STORED_EVENTS = 200;
 
 function loadInitialBookings(): BookingRecord[] {
   try {
     const raw = localStorage.getItem(STORAGE_BOOKINGS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (b): b is BookingRecord =>
+        Boolean(b) &&
+        typeof b.bookingId === 'string' &&
+        typeof b.passengerName === 'string' &&
+        typeof b.departureDateTime === 'string' &&
+        typeof b.arrivalDateTime === 'string' &&
+        typeof b.fare === 'number'
+    );
   } catch {
     return [];
   }
@@ -50,12 +66,39 @@ function loadInitialSeats(): SeatRecord[] {
     const raw = localStorage.getItem(STORAGE_SEATS_KEY);
     if (!raw) return createInitialSeats();
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length === 180) {
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 180 &&
+      parsed.every(
+        (s) => s && typeof s.seatNumber === 'string' && typeof s.row === 'number'
+      )
+    ) {
       return parsed;
     }
     return createInitialSeats();
   } catch {
     return createInitialSeats();
+  }
+}
+
+function loadInitialEvents(): AppEventRecord[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_EVENTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (e): e is AppEventRecord =>
+          Boolean(e) &&
+          typeof e.id === 'string' &&
+          typeof e.type === 'string' &&
+          typeof e.timestamp === 'string' &&
+          typeof e.summary === 'string'
+      )
+      .slice(0, MAX_STORED_EVENTS);
+  } catch {
+    return [];
   }
 }
 
@@ -69,6 +112,7 @@ const NAV_ITEMS: Array<{
   { id: 'cancel', label: 'Cancel Ticket', icon: Trash2 },
   { id: 'fares', label: 'View Fares', icon: ListChecks },
   { id: 'seats', label: 'Cabin Seat Map', icon: Grid3X3 },
+  { id: 'developer', label: 'Developer Portal', icon: Terminal },
 ];
 
 export default function App() {
@@ -78,6 +122,7 @@ export default function App() {
 
   const [bookings, setBookings] = useState<BookingRecord[]>(loadInitialBookings);
   const [seats, setSeats] = useState<SeatRecord[]>(loadInitialSeats);
+  const [events, setEvents] = useState<AppEventRecord[]>(loadInitialEvents);
 
   const [preselectedAirlineCode, setPreselectedAirlineCode] = useState<
     string | null
@@ -86,14 +131,44 @@ export default function App() {
     string | null
   >(null);
 
+  const bootedRef = useRef(false);
+
+  const logEvent = useCallback(
+    (
+      type: AppEventType,
+      summary: string,
+      metadata?: Record<string, unknown>
+    ) => {
+      const nextEvent: AppEventRecord = {
+        id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        type,
+        timestamp: new Date().toISOString(),
+        summary,
+        metadata,
+      };
+      setEvents((prev) => [nextEvent, ...prev].slice(0, MAX_STORED_EVENTS));
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+    logEvent('SESSION_BOOT', 'FlightHub Lmtd client workspace initialized', {
+      activeBookings: bookings.length,
+      openSeats: seats.filter((s) => !s.isBooked).length,
+    });
+  }, [bookings, seats, logEvent]);
+
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_BOOKINGS_KEY, JSON.stringify(bookings));
       localStorage.setItem(STORAGE_SEATS_KEY, JSON.stringify(seats));
+      localStorage.setItem(STORAGE_EVENTS_KEY, JSON.stringify(events));
     } catch {
       // Storage quota or privacy mode fallback
     }
-  }, [bookings, seats]);
+  }, [bookings, seats, events]);
 
   const openSeatsCount = useMemo(
     () => seats.filter((s) => !s.isBooked).length,
@@ -103,6 +178,31 @@ export default function App() {
   const handleLoaderComplete = useCallback(() => {
     setShowIntroLoader(false);
   }, []);
+
+  const handlePaymentAttempt = useCallback(
+    (attempt: {
+      status: 'authorized' | 'declined';
+      method: PaymentMethod;
+      amount: number;
+      orderId: string;
+      referenceId?: string;
+    }) => {
+      if (attempt.status === 'authorized') {
+        logEvent(
+          'PAYMENT_AUTHORIZED',
+          `Razorpay ${attempt.method} payment authorized (Rs.${attempt.amount.toLocaleString('en-IN')})`,
+          attempt
+        );
+      } else {
+        logEvent(
+          'PAYMENT_DECLINED',
+          `Razorpay ${attempt.method} payment declined (Rs.${attempt.amount.toLocaleString('en-IN')})`,
+          attempt
+        );
+      }
+    },
+    [logEvent]
+  );
 
   const handleConfirmBooking = (params: {
     airline: Airline;
@@ -121,6 +221,22 @@ export default function App() {
     setSeats(result.updatedSeats);
     setBookings(result.updatedBookings);
     setPreselectedAirlineCode(null);
+
+    const totalPaid = result.createdBookings.reduce((sum, b) => sum + b.fare, 0);
+    logEvent(
+      'BOOKING_CREATED',
+      `${result.createdBookings.length} ${result.createdBookings.length === 1 ? 'ticket' : 'tickets'} issued on ${params.airline.name} (${params.departureAirport} → ${params.arrivalAirport})`,
+      {
+        bookingIds: result.createdBookings.map((b) => b.bookingId),
+        seatsAssigned: result.createdBookings.map((b) => b.seatBooked),
+        airlineCode: params.airline.code,
+        route: `${params.departureAirport} -> ${params.arrivalAirport}`,
+        totalFare: totalPaid,
+        paymentMethod: params.payment.method,
+        paymentOrderId: params.payment.orderId,
+      }
+    );
+
     return result.createdBookings;
   };
 
@@ -129,6 +245,18 @@ export default function App() {
     setSeats(result.updatedSeats);
     setBookings(result.updatedBookings);
     setCancelTargetBookingId(null);
+
+    logEvent(
+      'TICKET_CANCELLED',
+      `Cancelled ${result.cancelledBooking.bookingId} (${result.cancelledBooking.passengerName}, Seat ${result.cancelledBooking.seatBooked} released)`,
+      {
+        bookingId: result.cancelledBooking.bookingId,
+        seatReleased: result.cancelledBooking.seatBooked,
+        airlineCode: result.cancelledBooking.airlineCode,
+        refundAmount: result.cancelledBooking.fare,
+      }
+    );
+
     return result.cancelledBooking;
   };
 
@@ -137,21 +265,53 @@ export default function App() {
     setActiveTab('cancel');
   };
 
+  const handleSearchLogged = useCallback(
+    (info: {
+      mode: 'bookingId' | 'passengerName';
+      term: string;
+      matchCount: number;
+    }) => {
+      logEvent(
+        'TICKET_SEARCHED',
+        `Lookup by ${info.mode} "${info.term}" (${info.matchCount} matched)`,
+        info
+      );
+    },
+    [logEvent]
+  );
+
   const handleSelectAirlineFromFares = (airline: Airline) => {
     setPreselectedAirlineCode(airline.code);
     setActiveTab('book');
   };
 
   const handleLoadSampleData = () => {
+    const existingIds = new Set(bookings.map((b) => b.bookingId));
     const result = buildSampleBookings(seats, bookings);
+    const addedBookings = result.updatedBookings.filter(
+      (b) => !existingIds.has(b.bookingId)
+    );
     setSeats(result.updatedSeats);
     setBookings(result.updatedBookings);
+    logEvent(
+      'SAMPLE_DATA_LOADED',
+      `Seeded ${addedBookings.length} sample reservations into active cabin`,
+      {
+        bookingIds: addedBookings.map((b) => b.bookingId),
+      }
+    );
   };
 
   const handleResetAll = () => {
+    const clearedCount = bookings.length;
     setBookings([]);
     setSeats(createInitialSeats());
     setCancelTargetBookingId(null);
+    logEvent(
+      'CABIN_RESET',
+      `Cleared ${clearedCount} active reservations and reset all 180 seats`,
+      { clearedCount }
+    );
   };
 
   const activeNavMeta =
@@ -359,6 +519,7 @@ export default function App() {
               seats={seats}
               preselectedAirlineCode={preselectedAirlineCode}
               onConfirmBooking={handleConfirmBooking}
+              onPaymentAttempt={handlePaymentAttempt}
               onNavigateToView={() => handleSelectTab('view')}
               onNavigateToSeats={() => handleSelectTab('seats')}
             />
@@ -370,6 +531,7 @@ export default function App() {
               onRequestCancel={handleRequestCancelFromView}
               onGoToBook={() => handleSelectTab('book')}
               onLoadSampleData={handleLoadSampleData}
+              onSearchLogged={handleSearchLogged}
             />
           )}
 
@@ -393,6 +555,16 @@ export default function App() {
               seats={seats}
               bookings={bookings}
               onRequestCancel={handleRequestCancelFromView}
+            />
+          )}
+
+          {activeTab === 'developer' && (
+            <DeveloperPortalView
+              bookings={bookings}
+              seats={seats}
+              events={events}
+              onLoadSampleData={handleLoadSampleData}
+              onClearEvents={() => setEvents([])}
             />
           )}
         </main>

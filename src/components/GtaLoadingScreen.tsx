@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2, Plane } from 'lucide-react';
 
 interface GtaLoadingScreenProps {
@@ -16,7 +16,7 @@ const SLIDES = [
     src: '/src/assets/images/gta_flighthub_cockpit_1795633891331.jpg',
     alt: 'Night flight deck overlooking glowing city skyline from cruising altitude',
     caption: 'Night Flight Deck · Cruise Altitude',
-    tip: 'All 6 FlightHub Lmtd carriers operate on fixed 3-hour departure windows every day.',
+    tip: 'FlightHub Lmtd connects 148 global airports with carrier-adjusted flight times and local timezone schedules.',
   },
   {
     src: '/src/assets/images/gta_flighthub_lounge_1795633891608.jpg',
@@ -31,12 +31,28 @@ export function GtaLoadingScreen({ onComplete }: GtaLoadingScreenProps) {
   const [slideIndex, setSlideIndex] = useState(0);
   const [fadingOut, setFadingOut] = useState(false);
 
+  const completedRef = useRef(false);
+  const finishTimerRef = useRef<number | null>(null);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
+  const triggerExit = (delayMs: number) => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    setFadingOut(true);
+    finishTimerRef.current = window.setTimeout(() => {
+      onCompleteRef.current();
+    }, delayMs);
+  };
+
   useEffect(() => {
+    completedRef.current = false;
     const startTime = performance.now();
-    const totalDuration = 4200; // 4.2s cinematic GTA V sequence
+    const totalDuration = 4000;
 
     let rafId = 0;
     const tick = (now: number) => {
+      if (completedRef.current) return;
       const elapsed = now - startTime;
       const pct = Math.min(100, Math.round((elapsed / totalDuration) * 100));
       setProgress(pct);
@@ -50,31 +66,33 @@ export function GtaLoadingScreen({ onComplete }: GtaLoadingScreenProps) {
       if (elapsed < totalDuration) {
         rafId = requestAnimationFrame(tick);
       } else {
-        setFadingOut(true);
-        setTimeout(() => {
-          onComplete();
-        }, 420);
+        triggerExit(350);
       }
     };
 
     rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [onComplete]);
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (finishTimerRef.current !== null) {
+        clearTimeout(finishTimerRef.current);
+      }
+    };
+  }, []);
 
-  const currentSlide = SLIDES[slideIndex];
+  const currentSlide = SLIDES[slideIndex] ?? SLIDES[0];
 
   const loadingStage =
     progress < 34
       ? 'Initializing 180-seat cabin manifest'
       : progress < 68
-        ? 'Syncing carrier fares & flight windows'
+        ? 'Syncing 148 airports & flight windows'
         : progress < 95
           ? 'Preparing FlightHub Lmtd terminal'
           : 'Cleared for boarding';
 
   return (
     <div
-      className={`fixed inset-0 z-50 bg-[#0A0A0C] text-white overflow-hidden transition-opacity duration-400 ${
+      className={`fixed inset-0 z-50 bg-[#0A0A0C] text-white overflow-hidden transition-opacity duration-300 ${
         fadingOut ? 'opacity-0 pointer-events-none' : 'opacity-100'
       }`}
       role="dialog"
@@ -133,10 +151,7 @@ export function GtaLoadingScreen({ onComplete }: GtaLoadingScreenProps) {
 
           <button
             type="button"
-            onClick={() => {
-              setFadingOut(true);
-              setTimeout(onComplete, 200);
-            }}
+            onClick={() => triggerExit(180)}
             className="px-4 py-2 text-xs font-semibold text-zinc-200 bg-black/60 hover:bg-[#E50914] hover:text-white border border-white/20 hover:border-[#E50914] rounded-md transition-colors whitespace-nowrap shrink-0 backdrop-blur-xs"
           >
             Enter Terminal

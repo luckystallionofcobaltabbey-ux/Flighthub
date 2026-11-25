@@ -19,6 +19,7 @@ import {
   BookingRecord,
   PassengerDraft,
   PaymentDetails,
+  PaymentMethod,
   SeatPreference,
   SeatRecord,
 } from '../types/flighthub';
@@ -44,6 +45,13 @@ interface BookTicketViewProps {
     passengers: PassengerDraft[];
     payment: PaymentDetails;
   }) => BookingRecord[];
+  onPaymentAttempt?: (attempt: {
+    status: 'authorized' | 'declined';
+    method: PaymentMethod;
+    amount: number;
+    orderId: string;
+    referenceId?: string;
+  }) => void;
   onNavigateToView: () => void;
   onNavigateToSeats: () => void;
 }
@@ -61,6 +69,7 @@ export function BookTicketView({
   seats,
   preselectedAirlineCode,
   onConfirmBooking,
+  onPaymentAttempt,
   onNavigateToView,
   onNavigateToSeats,
 }: BookTicketViewProps) {
@@ -328,6 +337,7 @@ export function BookTicketView({
         defaultHolderName={passengers[0]?.name.trim() || ''}
         onClose={() => setRazorpayOpen(false)}
         onPaymentSuccess={handlePaymentSuccess}
+        onPaymentAttempt={onPaymentAttempt}
       />
 
       {/* Cinematic Netflix-Style Featured Banner */}

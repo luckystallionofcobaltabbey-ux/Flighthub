@@ -211,8 +211,39 @@ export function computeFlightTimes(
   const depZone = metrics.depAirport?.timezone ?? 'Asia/Kolkata';
   const arrZone = metrics.arrAirport?.timezone ?? 'Asia/Kolkata';
 
-  const [year, month, day] = travelDate.split('-').map(Number);
-  const [hour, minute] = departureTime.split(':').map(Number);
+  const dateParts = travelDate.split('-').map(Number);
+  const timeParts = departureTime.split(':').map(Number);
+  const [year, month, day] = dateParts;
+  const [hour, minute] = timeParts;
+
+  const isValidDate =
+    dateParts.length === 3 &&
+    timeParts.length >= 2 &&
+    Number.isFinite(year) &&
+    Number.isFinite(month) &&
+    Number.isFinite(day) &&
+    Number.isFinite(hour) &&
+    Number.isFinite(minute) &&
+    year >= 1970 &&
+    year <= 2100 &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= 31;
+
+  if (!isValidDate) {
+    const fallback = `${travelDate || '----'} ${departureTime || '--:--'}:00`;
+    return {
+      departureDateTime: fallback,
+      arrivalDateTime: fallback,
+      departureTzLabel: 'LOCAL',
+      arrivalTzLabel: 'LOCAL',
+      durationMinutes: metrics.durationMinutes,
+      durationFormatted: metrics.durationFormatted,
+      distanceKm: metrics.distanceKm,
+      dayOffset: 0,
+    };
+  }
 
   const naiveUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
   const depOffset1 = getTimezoneOffsetMs(new Date(naiveUtc), depZone);

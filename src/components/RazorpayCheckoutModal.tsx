@@ -26,6 +26,13 @@ interface RazorpayCheckoutModalProps {
   defaultHolderName: string;
   onClose: () => void;
   onPaymentSuccess: (payment: PaymentDetails) => void;
+  onPaymentAttempt?: (attempt: {
+    status: 'authorized' | 'declined';
+    method: PaymentMethod;
+    amount: number;
+    orderId: string;
+    referenceId?: string;
+  }) => void;
 }
 
 const NETBANKING_BANKS = [
@@ -59,6 +66,7 @@ export function RazorpayCheckoutModal({
   defaultHolderName,
   onClose,
   onPaymentSuccess,
+  onPaymentAttempt,
 }: RazorpayCheckoutModalProps) {
   const orderId = useMemo(() => generateRazorpayOrderId(), []);
   const [method, setMethod] = useState<PaymentMethod>('UPI');
@@ -133,12 +141,25 @@ export function RazorpayCheckoutModal({
         setErrorMsg(
           'Razorpay Mock Bank Error: Transaction declined by issuer. Retry or select another payment method.'
         );
+        onPaymentAttempt?.({
+          status: 'declined',
+          method,
+          amount: totalAmount,
+          orderId,
+        });
         return;
       }
 
       const paymentId = generateRazorpayPaymentId();
       setIssuedPaymentId(paymentId);
       setStage('success');
+      onPaymentAttempt?.({
+        status: 'authorized',
+        method,
+        amount: totalAmount,
+        orderId,
+        referenceId: paymentId,
+      });
 
       const digits = cardNumber.replace(/\D/g, '');
       const accountMasked =

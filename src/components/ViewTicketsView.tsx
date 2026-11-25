@@ -9,6 +9,11 @@ interface ViewTicketsViewProps {
   onRequestCancel: (bookingId: string) => void;
   onGoToBook: () => void;
   onLoadSampleData: () => void;
+  onSearchLogged?: (info: {
+    mode: SearchMode;
+    term: string;
+    matchCount: number;
+  }) => void;
 }
 
 type SearchMode = 'bookingId' | 'passengerName';
@@ -18,6 +23,7 @@ export function ViewTicketsView({
   onRequestCancel,
   onGoToBook,
   onLoadSampleData,
+  onSearchLogged,
 }: ViewTicketsViewProps) {
   const [searchMode, setSearchMode] = useState<SearchMode>('bookingId');
   const [query, setQuery] = useState('');
@@ -71,6 +77,19 @@ export function ViewTicketsView({
     setSelectedTicketId(null);
     setLastFourFilter('');
     setSubmittedSearch({ mode: searchMode, term: query });
+
+    const trimmed = query.trim();
+    if (trimmed && onSearchLogged) {
+      const matchCount =
+        searchMode === 'bookingId'
+          ? bookings.filter(
+              (b) => b.bookingId.toUpperCase() === trimmed.toUpperCase()
+            ).length
+          : bookings.filter(
+              (b) => b.passengerName.toLowerCase() === trimmed.toLowerCase()
+            ).length;
+      onSearchLogged({ mode: searchMode, term: trimmed, matchCount });
+    }
   };
 
   const handleClearSearch = () => {
