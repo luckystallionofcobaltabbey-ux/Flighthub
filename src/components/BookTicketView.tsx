@@ -3,14 +3,15 @@ import {
   AlertCircle,
   ArrowLeftRight,
   CheckCircle2,
+  Clock,
   Minus,
   Plus,
   Star,
 } from 'lucide-react';
 import {
   AIRLINES,
+  AIRPORTS,
   AVAILABLE_TIMES,
-  POPULAR_AIRPORTS,
   SEAT_PREFERENCES,
 } from '../data/airlines';
 import {
@@ -22,11 +23,13 @@ import {
   SeatRecord,
 } from '../types/flighthub';
 import {
+  calculateRouteMetrics,
   computeFlightTimes,
   formatDisplayDateTime,
   getTodayDateString,
 } from '../utils/flightEngine';
-import { MockPaymentCheckout } from './MockPaymentCheckout';
+import { AirportSelector } from './AirportSelector';
+import { RazorpayCheckoutModal } from './RazorpayCheckoutModal';
 import { TicketCard } from './TicketCard';
 
 interface BookTicketViewProps {
@@ -65,7 +68,7 @@ export function BookTicketView({
     AIRLINES.find((a) => a.code === preselectedAirlineCode) ?? AIRLINES[0];
 
   const [departureAirport, setDepartureAirport] = useState('DEL');
-  const [arrivalAirport, setArrivalAirport] = useState('BOM');
+  const [arrivalAirport, setArrivalAirport] = useState('LHR');
   const [selectedAirlineCode, setSelectedAirlineCode] = useState(
     initialAirline.code
   );
@@ -74,9 +77,7 @@ export function BookTicketView({
   const [passengers, setPassengers] = useState<PassengerDraft[]>([
     createPassenger(1),
   ]);
-  const [checkoutStep, setCheckoutStep] = useState<'details' | 'payment'>(
-    'details'
-  );
+  const [razorpayOpen, setRazorpayOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmedTickets, setConfirmedTickets] = useState<
     BookingRecord[] | null
@@ -95,10 +96,32 @@ export function BookTicketView({
     };
   }, [seats]);
 
+  const routeMetrics = useMemo(
+    () =>
+      calculateRouteMetrics(
+        departureAirport,
+        arrivalAirport,
+        selectedAirline.cruiseSpeedKmh
+      ),
+    [departureAirport, arrivalAirport, selectedAirline.cruiseSpeedKmh]
+  );
+
   const flightTimes = useMemo(() => {
     if (!travelDate || !departureTime) return null;
-    return computeFlightTimes(travelDate, departureTime);
-  }, [travelDate, departureTime]);
+    return computeFlightTimes(
+      travelDate,
+      departureTime,
+      departureAirport,
+      arrivalAirport,
+      selectedAirline.cruiseSpeedKmh
+    );
+  }, [
+    travelDate,
+    departureTime,
+    departureAirport,
+    arrivalAirport,
+    selectedAirline.cruiseSpeedKmh,
+  ]);
 
   const totalFare = selectedAirline.fare * passengers.length;
 
@@ -136,8 +159,8 @@ export function BookTicketView({
     const dep = departureAirport.trim().toUpperCase();
     const arr = arrivalAirport.trim().toUpperCase();
 
-    if (dep.length < 2) return 'Enter a valid departure airport code.';
-    if (arr.length < 2) return 'Enter a valid arrival airport code.';
+    if (dep.length < 2) return 'Select a valid departure airport.';
+    if (arr.length < 2) return 'Select a valid arrival airport.';
     if (dep === arr) {
       return 'Departure and arrival airports must be different.';
     }
@@ -160,7 +183,7 @@ export function BookTicketView({
     return null;
   };
 
-  const handleProceedToPayment = (e: React.FormEvent) => {
+  const handleOpenRazorpay = (e: React.FormEvent) => {
     e.preventDefault();
     const err = validateForm();
     if (err) {
@@ -168,16 +191,11 @@ export function BookTicketView({
       return;
     }
     setErrorMsg(null);
-    setCheckoutStep('payment');
+    setRazorpayOpen(true);
   };
 
   const handlePaymentSuccess = (payment: PaymentDetails) => {
-    const err = validateForm();
-    if (err) {
-      setErrorMsg(err);
-      setCheckoutStep('details');
-      return;
-    }
+    setRazorpayOpen(false);
     try {
       const created = onConfirmBooking({
         airline: selectedAirline,
@@ -189,19 +207,16 @@ export function BookTicketView({
         payment,
       });
       setConfirmedTickets(created);
-      setCheckoutStep('details');
       setErrorMsg(null);
     } catch (errObj) {
       setErrorMsg(
         errObj instanceof Error ? errObj.message : 'Booking failed.'
       );
-      setCheckoutStep('details');
     }
   };
 
   const handleResetForNewBooking = () => {
     setConfirmedTickets(null);
-    setCheckoutStep('details');
     setErrorMsg(null);
     setPassengers([createPassenger(1)]);
   };
@@ -226,7 +241,7 @@ export function BookTicketView({
                   on {first.airline} · {first.departureAirport} to{' '}
                   {first.arrivalAirport}
                   {first.payment
-                    ? ` · Ref ${first.payment.referenceId}`
+                    ? ` · Razorpay ${first.payment.referenceId}`
                     : ''}
                 </p>
               </div>
@@ -259,17 +274,23 @@ export function BookTicketView({
 
           <div className="pt-5 grid grid-cols-2 sm:grid-cols-4 gap-6 text-sm">
             <div>
-              <div className="text-xs text-zinc-400">Departure</div>
+              <div className="text-xs text-zinc-400">Departure (Local)</div>
               <div className="mt-0.5 font-mono font-semibold text-white">
                 {first.departureAirport} ·{' '}
-                {formatDisplayDateTime(first.departureDateTime)}
+                {formatDisplayDateTime(
+                  first.departureDateTime,
+                  first.departureTzLabel
+                )}
               </div>
             </div>
             <div>
-              <div className="text-xs text-zinc-400">Arrival</div>
+              <div className="text-xs text-zinc-400">Arrival (Local)</div>
               <div className="mt-0.5 font-mono font-semibold text-white">
                 {first.arrivalAirport} ·{' '}
-                {formatDisplayDateTime(first.arrivalDateTime)}
+                {formatDisplayDateTime(
+                  first.arrivalDateTime,
+                  first.arrivalTzLabel
+                )}
               </div>
             </div>
             <div>
@@ -298,6 +319,17 @@ export function BookTicketView({
 
   return (
     <div className="space-y-6">
+      <RazorpayCheckoutModal
+        isOpen={razorpayOpen}
+        totalAmount={totalFare}
+        passengerCount={passengers.length}
+        routeLabel={`${departureAirport} → ${arrivalAirport}`}
+        airlineName={selectedAirline.name}
+        defaultHolderName={passengers[0]?.name.trim() || ''}
+        onClose={() => setRazorpayOpen(false)}
+        onPaymentSuccess={handlePaymentSuccess}
+      />
+
       {/* Cinematic Netflix-Style Featured Banner */}
       <div className="relative rounded-xl overflow-hidden border border-zinc-800 bg-[#18181B]">
         <div className="relative h-44 sm:h-52 w-full bg-gradient-to-r from-[#1A0507] via-[#141414] to-[#18181B]">
@@ -313,7 +345,7 @@ export function BookTicketView({
           <div className="absolute inset-0 p-6 sm:p-8 flex flex-col justify-end">
             <div className="max-w-2xl">
               <div className="text-xs font-mono font-semibold text-[#E50914] tracking-wide">
-                FlightHub Lmtd · Priority Dispatch
+                FlightHub Lmtd · {AIRPORTS.length} Global Airports Connected
               </div>
               <h1 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight mt-1 text-balance">
                 Book Your Next Departure
@@ -339,322 +371,335 @@ export function BookTicketView({
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Booking Details OR Mock Payment Checkout */}
-        <div className="lg:col-span-8">
-          {checkoutStep === 'payment' ? (
-            <MockPaymentCheckout
-              totalAmount={totalFare}
-              passengerCount={passengers.length}
-              farePerPassenger={selectedAirline.fare}
-              defaultHolderName={passengers[0]?.name.trim() || ''}
-              onBack={() => setCheckoutStep('details')}
-              onPaymentSuccess={handlePaymentSuccess}
-            />
-          ) : (
-            <form onSubmit={handleProceedToPayment} className="space-y-6">
-              {/* 1. Route & Schedule */}
-              <section className="bg-[#18181B] border border-zinc-800 rounded-xl p-6 space-y-5">
-                <h2 className="font-display text-base font-semibold text-white">
-                  01. Route & Travel Window
-                </h2>
-
-                <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-3 items-end">
-                  <div>
-                    <label
-                      htmlFor="dep-airport"
-                      className="block text-xs font-medium text-zinc-300 mb-1.5"
-                    >
-                      Departure Airport Code
-                    </label>
-                    <input
-                      id="dep-airport"
-                      type="text"
-                      list="airport-codes"
-                      maxLength={5}
-                      value={departureAirport}
-                      onChange={(e) => {
-                        setDepartureAirport(e.target.value.toUpperCase());
-                        setErrorMsg(null);
-                      }}
-                      placeholder="e.g. DEL"
-                      className="w-full px-3.5 py-2.5 text-sm font-mono uppercase bg-[#111114] border border-zinc-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-[#E50914]/25 focus:border-[#E50914]"
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleSwapAirports}
-                    aria-label="Swap departure and arrival airports"
-                    className="h-[42px] px-3 inline-flex items-center justify-center border border-zinc-700 bg-[#111114] rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors"
-                  >
-                    <ArrowLeftRight className="w-4 h-4" />
-                  </button>
-
-                  <div>
-                    <label
-                      htmlFor="arr-airport"
-                      className="block text-xs font-medium text-zinc-300 mb-1.5"
-                    >
-                      Arrival Airport Code
-                    </label>
-                    <input
-                      id="arr-airport"
-                      type="text"
-                      list="airport-codes"
-                      maxLength={5}
-                      value={arrivalAirport}
-                      onChange={(e) => {
-                        setArrivalAirport(e.target.value.toUpperCase());
-                        setErrorMsg(null);
-                      }}
-                      placeholder="e.g. BOM"
-                      className="w-full px-3.5 py-2.5 text-sm font-mono uppercase bg-[#111114] border border-zinc-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-[#E50914]/25 focus:border-[#E50914]"
-                    />
-                  </div>
-                </div>
-
-                <datalist id="airport-codes">
-                  {POPULAR_AIRPORTS.map((ap) => (
-                    <option key={ap.code} value={ap.code}>
-                      {ap.city}
-                    </option>
-                  ))}
-                </datalist>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-3 border-t border-zinc-800">
-                  <div>
-                    <label
-                      htmlFor="travel-date"
-                      className="block text-xs font-medium text-zinc-300 mb-1.5"
-                    >
-                      Travel Date
-                    </label>
-                    <input
-                      id="travel-date"
-                      type="date"
-                      value={travelDate}
-                      onChange={(e) => {
-                        setTravelDate(e.target.value);
-                        setErrorMsg(null);
-                      }}
-                      className="w-full px-3.5 py-2.5 text-sm font-mono bg-[#111114] border border-zinc-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-[#E50914]/25 focus:border-[#E50914]"
-                    />
-                  </div>
-
-                  <div>
-                    <span className="block text-xs font-medium text-zinc-300 mb-1.5">
-                      Departure Time (3h flight)
-                    </span>
-                    <div className="grid grid-cols-3 gap-2">
-                      {AVAILABLE_TIMES.map((t) => {
-                        const active = departureTime === t;
-                        return (
-                          <button
-                            key={t}
-                            type="button"
-                            onClick={() => setDepartureTime(t)}
-                            className={`py-2 px-2 text-xs font-mono font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 tabular-nums ${
-                              active
-                                ? 'bg-[#E50914] text-white border-[#E50914]'
-                                : 'bg-[#111114] text-zinc-300 border-zinc-700 hover:border-zinc-500 hover:text-white'
-                            }`}
-                          >
-                            {t}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {/* 2. Airline Selection */}
-              <section className="bg-[#18181B] border border-zinc-800 rounded-xl p-6 space-y-4">
-                <div className="flex items-center justify-between gap-4">
-                  <h2 className="font-display text-base font-semibold text-white">
-                    02. Select Carrier
-                  </h2>
-                  <span className="text-xs text-zinc-400">
-                    6 partner airlines
+        <form
+          onSubmit={handleOpenRazorpay}
+          className="lg:col-span-8 space-y-6"
+        >
+          {/* 1. Route & Location-Aware Schedule */}
+          <section className="bg-[#18181B] border border-zinc-800 rounded-xl p-6 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-display text-base font-semibold text-white">
+                01. Route & Travel Window
+              </h2>
+              {routeMetrics.distanceKm > 0 && (
+                <div className="inline-flex items-center gap-2 text-xs font-mono text-zinc-300 tabular-nums">
+                  <Clock className="w-3.5 h-3.5 text-[#E50914]" />
+                  <span>
+                    {routeMetrics.distanceKm.toLocaleString('en-IN')} km ·{' '}
+                    {routeMetrics.durationFormatted} flight
                   </span>
                 </div>
+              )}
+            </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {AIRLINES.map((airline) => {
-                    const isSelected = airline.code === selectedAirlineCode;
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-3 items-end">
+              <AirportSelector
+                id="dep-airport"
+                label="Departure Airport"
+                value={departureAirport}
+                excludeCode={arrivalAirport}
+                onChange={(code) => {
+                  setDepartureAirport(code);
+                  setErrorMsg(null);
+                }}
+              />
+
+              <button
+                type="button"
+                onClick={handleSwapAirports}
+                aria-label="Swap departure and arrival airports"
+                className="h-[42px] px-3 inline-flex items-center justify-center border border-zinc-700 bg-[#111114] rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors"
+              >
+                <ArrowLeftRight className="w-4 h-4" />
+              </button>
+
+              <AirportSelector
+                id="arr-airport"
+                label="Arrival Airport"
+                value={arrivalAirport}
+                excludeCode={departureAirport}
+                onChange={(code) => {
+                  setArrivalAirport(code);
+                  setErrorMsg(null);
+                }}
+              />
+            </div>
+
+            {flightTimes && (
+              <div className="px-4 py-3 rounded-lg bg-[#111114] border border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="text-zinc-300">
+                  <span className="font-semibold text-white">
+                    {routeMetrics.depAirport?.city ?? departureAirport}
+                  </span>{' '}
+                  ({flightTimes.departureTzLabel}) →{' '}
+                  <span className="font-semibold text-white">
+                    {routeMetrics.arrAirport?.city ?? arrivalAirport}
+                  </span>{' '}
+                  ({flightTimes.arrivalTzLabel})
+                </div>
+                <div className="font-mono text-zinc-300 tabular-nums">
+                  Est. Arrival:{' '}
+                  <span className="text-white font-semibold">
+                    {formatDisplayDateTime(
+                      flightTimes.arrivalDateTime,
+                      flightTimes.arrivalTzLabel
+                    )}
+                  </span>
+                  {flightTimes.dayOffset > 0 && (
+                    <span className="text-[#E50914] ml-1.5">
+                      (+{flightTimes.dayOffset}d)
+                    </span>
+                  )}
+                  {flightTimes.dayOffset < 0 && (
+                    <span className="text-amber-400 ml-1.5">
+                      ({flightTimes.dayOffset}d)
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-3 border-t border-zinc-800">
+              <div>
+                <label
+                  htmlFor="travel-date"
+                  className="block text-xs font-medium text-zinc-300 mb-1.5"
+                >
+                  Travel Date (Departure Local)
+                </label>
+                <input
+                  id="travel-date"
+                  type="date"
+                  value={travelDate}
+                  onChange={(e) => {
+                    setTravelDate(e.target.value);
+                    setErrorMsg(null);
+                  }}
+                  className="w-full px-3.5 py-2.5 text-sm font-mono bg-[#111114] border border-zinc-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-[#E50914]/25 focus:border-[#E50914]"
+                />
+              </div>
+
+              <div>
+                <span className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Departure Window ({routeMetrics.durationFormatted} flight)
+                </span>
+                <div className="grid grid-cols-3 gap-2">
+                  {AVAILABLE_TIMES.map((t) => {
+                    const active = departureTime === t;
                     return (
                       <button
-                        key={airline.code}
+                        key={t}
                         type="button"
-                        onClick={() => setSelectedAirlineCode(airline.code)}
-                        className={`text-left p-4 rounded-xl border transition-colors ${
-                          isSelected
-                            ? 'border-[#E50914] bg-[#E50914]/10 ring-1 ring-[#E50914]'
-                            : 'border-zinc-800 bg-[#111114] hover:border-zinc-700 hover:bg-zinc-900'
+                        onClick={() => setDepartureTime(t)}
+                        className={`py-2 px-2 text-xs font-mono font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 tabular-nums ${
+                          active
+                            ? 'bg-[#E50914] text-white border-[#E50914]'
+                            : 'bg-[#111114] text-zinc-300 border-zinc-700 hover:border-zinc-500 hover:text-white'
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="text-sm font-semibold text-white">
-                              {airline.name}
-                            </div>
-                            <div className="mt-1 flex items-center gap-2 text-xs text-zinc-400 font-mono tabular-nums">
-                              <span>Code {airline.code}</span>
-                              <span aria-hidden="true">·</span>
-                              <span className="inline-flex items-center gap-1">
-                                <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                                {airline.rating.toFixed(1)}/5
-                              </span>
-                            </div>
-                          </div>
-                          <div className="font-mono text-sm font-bold text-white tabular-nums">
-                            Rs.{airline.fare.toLocaleString('en-IN')}
-                          </div>
-                        </div>
+                        {t}
                       </button>
                     );
                   })}
                 </div>
-              </section>
-
-              {/* 3. Passengers & Seat Preferences */}
-              <section className="bg-[#18181B] border border-zinc-800 rounded-xl p-6 space-y-5">
-                <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-zinc-800">
-                  <div>
-                    <h2 className="font-display text-base font-semibold text-white">
-                      03. Passengers & Seat Preferences
-                    </h2>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      Preferred seats are allocated from Row 1 forward; falls
-                      back to next open seat if unavailable.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-zinc-400">
-                      Passengers
-                    </span>
-                    <div className="inline-flex items-center border border-zinc-700 rounded-lg bg-[#111114]">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handlePassengerCountChange(passengers.length - 1)
-                        }
-                        disabled={passengers.length <= 1}
-                        aria-label="Decrease passengers"
-                        className="p-2 text-zinc-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        <Minus className="w-3.5 h-3.5" />
-                      </button>
-                      <span className="w-8 text-center font-mono text-sm font-semibold text-white tabular-nums">
-                        {passengers.length}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handlePassengerCountChange(passengers.length + 1)
-                        }
-                        disabled={passengers.length >= 9}
-                        aria-label="Increase passengers"
-                        className="p-2 text-zinc-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="divide-y divide-zinc-800">
-                  {passengers.map((pax, idx) => (
-                    <div
-                      key={pax.id}
-                      className="py-4 first:pt-0 last:pb-0 space-y-3"
-                    >
-                      <div className="text-xs font-semibold text-zinc-400">
-                        Passenger {idx + 1}
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div>
-                          <label
-                            htmlFor={`pax-name-${pax.id}`}
-                            className="block text-xs font-medium text-zinc-300 mb-1"
-                          >
-                            Full Name
-                          </label>
-                          <input
-                            id={`pax-name-${pax.id}`}
-                            type="text"
-                            value={pax.name}
-                            onChange={(e) =>
-                              updatePassenger(pax.id, { name: e.target.value })
-                            }
-                            placeholder="e.g. Aarav Mehta"
-                            className="w-full px-3 py-2 text-sm bg-[#111114] border border-zinc-700 rounded-lg text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#E50914]/25 focus:border-[#E50914]"
-                          />
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor={`pax-cit-${pax.id}`}
-                            className="block text-xs font-medium text-zinc-300 mb-1"
-                          >
-                            Citizenship / Nationality
-                          </label>
-                          <input
-                            id={`pax-cit-${pax.id}`}
-                            type="text"
-                            value={pax.citizenship}
-                            onChange={(e) =>
-                              updatePassenger(pax.id, {
-                                citizenship: e.target.value,
-                              })
-                            }
-                            placeholder="e.g. Indian"
-                            className="w-full px-3 py-2 text-sm bg-[#111114] border border-zinc-700 rounded-lg text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#E50914]/25 focus:border-[#E50914]"
-                          />
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor={`pax-pref-${pax.id}`}
-                            className="block text-xs font-medium text-zinc-300 mb-1"
-                          >
-                            Seat Preference
-                          </label>
-                          <select
-                            id={`pax-pref-${pax.id}`}
-                            value={pax.preference}
-                            onChange={(e) =>
-                              updatePassenger(pax.id, {
-                                preference: e.target.value as SeatPreference,
-                              })
-                            }
-                            className="w-full px-3 py-2 text-sm bg-[#111114] border border-zinc-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-[#E50914]/25 focus:border-[#E50914]"
-                          >
-                            {SEAT_PREFERENCES.map((pref) => (
-                              <option key={pref} value={pref}>
-                                {pref}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <div className="flex justify-end">
-                <button
-                  type="submit"
-                  className="w-full sm:w-auto px-6 py-3 text-sm font-semibold text-white bg-[#E50914] hover:bg-[#F40612] rounded-lg transition-colors whitespace-nowrap"
-                >
-                  Proceed to Payment (Rs.{totalFare.toLocaleString('en-IN')})
-                </button>
               </div>
-            </form>
-          )}
-        </div>
+            </div>
+          </section>
+
+          {/* 2. Airline Selection */}
+          <section className="bg-[#18181B] border border-zinc-800 rounded-xl p-6 space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="font-display text-base font-semibold text-white">
+                02. Select Carrier
+              </h2>
+              <span className="text-xs text-zinc-400">6 partner airlines</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {AIRLINES.map((airline) => {
+                const isSelected = airline.code === selectedAirlineCode;
+                const carrierMetrics = calculateRouteMetrics(
+                  departureAirport,
+                  arrivalAirport,
+                  airline.cruiseSpeedKmh
+                );
+                return (
+                  <button
+                    key={airline.code}
+                    type="button"
+                    onClick={() => setSelectedAirlineCode(airline.code)}
+                    className={`text-left p-4 rounded-xl border transition-colors ${
+                      isSelected
+                        ? 'border-[#E50914] bg-[#E50914]/10 ring-1 ring-[#E50914]'
+                        : 'border-zinc-800 bg-[#111114] hover:border-zinc-700 hover:bg-zinc-900'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold text-white">
+                          {airline.name}
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-zinc-400 font-mono tabular-nums">
+                          <span>Code {airline.code}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="inline-flex items-center gap-1">
+                            <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                            {airline.rating.toFixed(1)}/5
+                          </span>
+                          {carrierMetrics.distanceKm > 0 && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span>{carrierMetrics.durationFormatted}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="font-mono text-sm font-bold text-white tabular-nums">
+                        Rs.{airline.fare.toLocaleString('en-IN')}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* 3. Passengers & Seat Preferences */}
+          <section className="bg-[#18181B] border border-zinc-800 rounded-xl p-6 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-zinc-800">
+              <div>
+                <h2 className="font-display text-base font-semibold text-white">
+                  03. Passengers & Seat Preferences
+                </h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Preferred seats are allocated from Row 1 forward; falls back
+                  to next open seat if unavailable.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-zinc-400">
+                  Passengers
+                </span>
+                <div className="inline-flex items-center border border-zinc-700 rounded-lg bg-[#111114]">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handlePassengerCountChange(passengers.length - 1)
+                    }
+                    disabled={passengers.length <= 1}
+                    aria-label="Decrease passengers"
+                    className="p-2 text-zinc-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="w-8 text-center font-mono text-sm font-semibold text-white tabular-nums">
+                    {passengers.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handlePassengerCountChange(passengers.length + 1)
+                    }
+                    disabled={passengers.length >= 9}
+                    aria-label="Increase passengers"
+                    className="p-2 text-zinc-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="divide-y divide-zinc-800">
+              {passengers.map((pax, idx) => (
+                <div
+                  key={pax.id}
+                  className="py-4 first:pt-0 last:pb-0 space-y-3"
+                >
+                  <div className="text-xs font-semibold text-zinc-400">
+                    Passenger {idx + 1}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label
+                        htmlFor={`pax-name-${pax.id}`}
+                        className="block text-xs font-medium text-zinc-300 mb-1"
+                      >
+                        Full Name
+                      </label>
+                      <input
+                        id={`pax-name-${pax.id}`}
+                        type="text"
+                        value={pax.name}
+                        onChange={(e) =>
+                          updatePassenger(pax.id, { name: e.target.value })
+                        }
+                        placeholder="e.g. Aarav Mehta"
+                        className="w-full px-3 py-2 text-sm bg-[#111114] border border-zinc-700 rounded-lg text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#E50914]/25 focus:border-[#E50914]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor={`pax-cit-${pax.id}`}
+                        className="block text-xs font-medium text-zinc-300 mb-1"
+                      >
+                        Citizenship / Nationality
+                      </label>
+                      <input
+                        id={`pax-cit-${pax.id}`}
+                        type="text"
+                        value={pax.citizenship}
+                        onChange={(e) =>
+                          updatePassenger(pax.id, {
+                            citizenship: e.target.value,
+                          })
+                        }
+                        placeholder="e.g. Indian"
+                        className="w-full px-3 py-2 text-sm bg-[#111114] border border-zinc-700 rounded-lg text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#E50914]/25 focus:border-[#E50914]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor={`pax-pref-${pax.id}`}
+                        className="block text-xs font-medium text-zinc-300 mb-1"
+                      >
+                        Seat Preference
+                      </label>
+                      <select
+                        id={`pax-pref-${pax.id}`}
+                        value={pax.preference}
+                        onChange={(e) =>
+                          updatePassenger(pax.id, {
+                            preference: e.target.value as SeatPreference,
+                          })
+                        }
+                        className="w-full px-3 py-2 text-sm bg-[#111114] border border-zinc-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-[#E50914]/25 focus:border-[#E50914]"
+                      >
+                        {SEAT_PREFERENCES.map((pref) => (
+                          <option key={pref} value={pref}>
+                            {pref}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              className="w-full sm:w-auto px-6 py-3 text-sm font-semibold text-white bg-[#E50914] hover:bg-[#F40612] rounded-lg transition-colors whitespace-nowrap"
+            >
+              Pay Rs.{totalFare.toLocaleString('en-IN')} with Razorpay
+            </button>
+          </div>
+        </form>
 
         {/* Right Summary Column */}
         <aside className="lg:col-span-4 bg-[#18181B] border border-zinc-800 rounded-xl p-6 space-y-5 lg:sticky lg:top-24">
@@ -663,9 +708,7 @@ export function BookTicketView({
               Booking Summary
             </h2>
             <p className="text-xs text-zinc-400 mt-0.5">
-              {checkoutStep === 'payment'
-                ? 'Awaiting payment authorization'
-                : 'Live fare & flight schedule breakdown'}
+              Timezone-adjusted schedule & fare
             </p>
           </div>
 
@@ -673,8 +716,14 @@ export function BookTicketView({
             <div className="flex items-center justify-between gap-2">
               <dt className="text-zinc-400">Route</dt>
               <dd className="font-mono font-semibold text-white">
-                {(departureAirport || '---').toUpperCase()} →{' '}
-                {(arrivalAirport || '---').toUpperCase()}
+                {departureAirport} → {arrivalAirport}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-zinc-400">Distance / Flight Time</dt>
+              <dd className="font-mono text-xs text-zinc-200 tabular-nums">
+                {routeMetrics.distanceKm.toLocaleString('en-IN')} km ·{' '}
+                {routeMetrics.durationFormatted}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2">
@@ -687,14 +736,20 @@ export function BookTicketView({
               <>
                 <div className="flex items-center justify-between gap-2">
                   <dt className="text-zinc-400">Departure</dt>
-                  <dd className="font-mono text-xs text-zinc-200 tabular-nums">
-                    {formatDisplayDateTime(flightTimes.departureDateTime)}
+                  <dd className="font-mono text-xs text-zinc-200 tabular-nums text-right">
+                    {formatDisplayDateTime(
+                      flightTimes.departureDateTime,
+                      flightTimes.departureTzLabel
+                    )}
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <dt className="text-zinc-400">Arrival</dt>
-                  <dd className="font-mono text-xs text-zinc-200 tabular-nums">
-                    {formatDisplayDateTime(flightTimes.arrivalDateTime)}
+                  <dd className="font-mono text-xs text-zinc-200 tabular-nums text-right">
+                    {formatDisplayDateTime(
+                      flightTimes.arrivalDateTime,
+                      flightTimes.arrivalTzLabel
+                    )}
                   </dd>
                 </div>
               </>

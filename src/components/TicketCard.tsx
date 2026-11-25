@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { Check, Copy, CreditCard, Plane, Trash2 } from 'lucide-react';
 import { BookingRecord } from '../types/flighthub';
-import { formatDisplayDateTime } from '../utils/flightEngine';
+import {
+  formatDisplayDateTime,
+  formatDurationMinutes,
+} from '../utils/flightEngine';
 
 interface TicketCardProps {
   ticket: BookingRecord;
@@ -33,6 +36,10 @@ export function TicketCard({
           'Preferred seat unavailable; alternative seat assigned'
         ? 'text-amber-400'
         : 'text-zinc-400';
+
+  const durationLabel = ticket.durationMinutes
+    ? formatDurationMinutes(ticket.durationMinutes)
+    : '3h 00m';
 
   return (
     <div className="bg-[#18181B] border border-zinc-800 rounded-xl overflow-hidden">
@@ -91,12 +98,15 @@ export function TicketCard({
       {/* Route Banner */}
       <div className="px-6 py-5 border-b border-zinc-800/80 grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
         <div>
-          <div className="text-xs text-zinc-400">Departure</div>
+          <div className="text-xs text-zinc-400">Departure (Local)</div>
           <div className="font-display text-2xl font-bold text-white tracking-tight font-mono">
             {ticket.departureAirport}
           </div>
           <div className="mt-0.5 font-mono text-xs text-zinc-300 tabular-nums">
-            {formatDisplayDateTime(ticket.departureDateTime)}
+            {formatDisplayDateTime(
+              ticket.departureDateTime,
+              ticket.departureTzLabel
+            )}
           </div>
         </div>
 
@@ -106,18 +116,24 @@ export function TicketCard({
             <Plane className="w-4 h-4 text-[#E50914] shrink-0" />
             <div className="h-px flex-1 bg-zinc-700" />
           </div>
-          <span className="mt-1 text-xs text-zinc-400 tabular-nums">
-            3h 00m direct
+          <span className="mt-1 text-xs text-zinc-400 font-mono tabular-nums">
+            {durationLabel}
+            {ticket.distanceKm
+              ? ` · ${ticket.distanceKm.toLocaleString('en-IN')} km`
+              : ''}
           </span>
         </div>
 
         <div className="sm:text-right">
-          <div className="text-xs text-zinc-400">Arrival</div>
+          <div className="text-xs text-zinc-400">Arrival (Local)</div>
           <div className="font-display text-2xl font-bold text-white tracking-tight font-mono">
             {ticket.arrivalAirport}
           </div>
           <div className="mt-0.5 font-mono text-xs text-zinc-300 tabular-nums">
-            {formatDisplayDateTime(ticket.arrivalDateTime)}
+            {formatDisplayDateTime(
+              ticket.arrivalDateTime,
+              ticket.arrivalTzLabel
+            )}
           </div>
         </div>
       </div>
@@ -158,7 +174,7 @@ export function TicketCard({
         </div>
       </div>
 
-      {/* Payment Receipt Line */}
+      {/* Razorpay Payment Receipt Line */}
       {ticket.payment && (
         <div className="px-6 py-3 border-t border-zinc-800/80 bg-[#141414]/60 flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-400">
           <span className="inline-flex items-center gap-2">
@@ -166,13 +182,13 @@ export function TicketCard({
             <span>
               Paid via{' '}
               <span className="text-zinc-200 font-medium">
-                {ticket.payment.method}
+                {ticket.payment.gateway ?? 'Razorpay'} · {ticket.payment.method}
               </span>{' '}
               ({ticket.payment.accountMasked})
             </span>
           </span>
           <span className="font-mono text-zinc-300 tabular-nums">
-            Ref {ticket.payment.referenceId}
+            {ticket.payment.referenceId}
           </span>
         </div>
       )}
