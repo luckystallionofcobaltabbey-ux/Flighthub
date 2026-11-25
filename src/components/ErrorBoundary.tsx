@@ -44,15 +44,15 @@ export class ErrorBoundary extends Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-[#141414] text-zinc-100 flex items-center justify-center p-6">
-          <div className="max-w-md w-full bg-[#18181B] border border-zinc-800 rounded-xl p-6 space-y-4">
+        <div className="min-h-screen bg-[#070B14] bg-isometric-grid text-slate-100 flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-[#0D1526] border border-[#1E2E4E] iso-depth rounded-xl p-6 space-y-4">
             <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-[#E50914] shrink-0 mt-0.5" />
+              <AlertTriangle className="w-5 h-5 text-[#FF4D88] shrink-0 mt-0.5" />
               <div>
                 <h1 className="font-display text-lg font-bold text-white">
                   Display Recovery Needed
                 </h1>
-                <p className="mt-1 text-xs text-zinc-400">
+                <p className="mt-1 text-xs text-slate-400">
                   {this.state.errorMessage}
                 </p>
               </div>
@@ -64,14 +64,14 @@ export class ErrorBoundary extends Component<
                 onClick={() =>
                   this.setState({ hasError: false, errorMessage: '' })
                 }
-                className="px-4 py-2 text-xs font-medium text-zinc-200 bg-[#111114] border border-zinc-700 hover:bg-zinc-800 rounded-lg transition-colors"
+                className="px-4 py-2 text-xs font-medium text-slate-200 bg-[#0A1120] border border-[#1E2E4E] hover:bg-[#121D33] rounded-lg transition-colors"
               >
                 Retry Render
               </button>
               <button
                 type="button"
                 onClick={this.handleResetAndReload}
-                className="px-4 py-2 text-xs font-semibold text-white bg-[#E50914] hover:bg-[#F40612] rounded-lg transition-colors inline-flex items-center gap-1.5"
+                className="px-4 py-2 text-xs font-semibold text-white bg-[#A50044] hover:bg-[#BE0A54] rounded-lg transition-colors inline-flex items-center gap-1.5"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Reset Cabin Cache & Reload</span>

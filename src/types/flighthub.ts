@@ -4,12 +4,37 @@ export type SeatPreference = SeatType | 'No Preference';
 
 export type SeatLetter = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
+export type FleetTier =
+  | 'Regional Shuttle'
+  | 'Narrowbody Jet'
+  | 'Widebody Long-Haul'
+  | 'Flagship Twin-Aisle';
+
 export interface Airline {
   name: string;
   code: string;
+  hubCity: string;
+  country: string;
+  fleetTier: FleetTier;
   rating: number;
   fare: number;
+  baseFee: number;
+  ratePerKm: number;
+  fuelSurchargePerKm: number;
+  fuelBurnLitresPerKm: number;
   cruiseSpeedKmh: number;
+}
+
+export interface FareBreakdown {
+  baseFare: number;
+  distanceCharge: number;
+  fuelSurcharge: number;
+  airportTaxes: number;
+  windFuelMultiplier: number;
+  totalFare: number;
+  estimatedFuelLitres: number;
+  distanceKm: number;
+  isInternational: boolean;
 }
 
 export interface AirportInfo {
@@ -59,8 +84,12 @@ export interface PaymentDetails {
   paidAt: string;
 }
 
+export const DEVELOPER_ADMIN_EMAIL = 'luckystallionofcobaltabbey@gmail.com';
+
 export interface BookingRecord {
   bookingId: string;
+  actorEmail?: string;
+  actorRole?: 'developer' | 'tester';
   passengerName: string;
   citizenship: string;
   seatPreference: SeatPreference;
@@ -77,6 +106,7 @@ export interface BookingRecord {
   durationMinutes?: number;
   distanceKm?: number;
   fare: number;
+  fareBreakdown?: FareBreakdown;
   payment?: PaymentDetails;
   createdAt: string;
 }
@@ -100,6 +130,8 @@ export type AppEventType =
 
 export interface AppEventRecord {
   id: string;
+  actorEmail?: string;
+  actorRole?: 'developer' | 'tester';
   type: AppEventType;
   timestamp: string;
   summary: string;

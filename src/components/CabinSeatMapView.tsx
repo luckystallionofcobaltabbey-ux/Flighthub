@@ -65,13 +65,13 @@ export function CabinSeatMapView({
           <h1 className="font-display text-2xl font-bold text-white tracking-tight">
             Cabin Seat Map (1A – 30F)
           </h1>
-          <p className="mt-1 text-sm text-zinc-400">
+          <p className="mt-1 text-sm text-slate-400">
             Live 180-seat cabin inventory across 30 rows. Click any seat to
             inspect its allocation status or boarding ticket.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1 p-1 bg-[#18181B] rounded-lg border border-zinc-800">
+        <div className="flex flex-wrap items-center gap-1 p-1 bg-[#0D1526] rounded-lg border border-[#1E2E4E]">
           {(
             ['All', 'Available', 'Booked', 'Window', 'Middle', 'Aisle'] as const
           ).map((f) => (
@@ -81,8 +81,8 @@ export function CabinSeatMapView({
               onClick={() => setFilter(f)}
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
                 filter === f
-                  ? 'bg-[#E50914] text-white'
-                  : 'text-zinc-400 hover:text-white'
+                  ? 'bg-[#004D98] text-white'
+                  : 'text-slate-400 hover:text-white'
               }`}
             >
               {f}
@@ -92,34 +92,34 @@ export function CabinSeatMapView({
       </div>
 
       {/* Availability Summary Strip */}
-      <div className="bg-[#18181B] border border-zinc-800 rounded-xl px-6 py-4 grid grid-cols-2 sm:grid-cols-5 gap-6">
+      <div className="bg-[#0D1526] border border-[#1E2E4E] iso-depth-sm rounded-xl px-6 py-4 grid grid-cols-2 sm:grid-cols-5 gap-6">
         <div>
-          <div className="text-xs text-zinc-400">Total Seats</div>
+          <div className="text-xs text-slate-400">Total Seats</div>
           <div className="mt-0.5 font-mono text-lg font-bold text-white tabular-nums">
             {stats.total}
           </div>
         </div>
         <div>
-          <div className="text-xs text-zinc-400">Available</div>
-          <div className="mt-0.5 font-mono text-lg font-bold text-emerald-400 tabular-nums">
+          <div className="text-xs text-slate-400">Available</div>
+          <div className="mt-0.5 font-mono text-lg font-bold text-[#60A5FA] tabular-nums">
             {stats.open}
           </div>
         </div>
         <div>
-          <div className="text-xs text-zinc-400">Booked</div>
-          <div className="mt-0.5 font-mono text-lg font-bold text-[#E50914] tabular-nums">
+          <div className="text-xs text-slate-400">Booked</div>
+          <div className="mt-0.5 font-mono text-lg font-bold text-[#FF4D88] tabular-nums">
             {stats.booked}
           </div>
         </div>
         <div>
-          <div className="text-xs text-zinc-400">Open Window / Aisle</div>
-          <div className="mt-0.5 font-mono text-sm font-semibold text-zinc-200 tabular-nums">
+          <div className="text-xs text-slate-400">Open Window / Aisle</div>
+          <div className="mt-0.5 font-mono text-sm font-semibold text-slate-200 tabular-nums">
             {stats.windowOpen} W · {stats.aisleOpen} A
           </div>
         </div>
         <div>
-          <div className="text-xs text-zinc-400">Open Middle</div>
-          <div className="mt-0.5 font-mono text-sm font-semibold text-zinc-200 tabular-nums">
+          <div className="text-xs text-slate-400">Open Middle</div>
+          <div className="mt-0.5 font-mono text-sm font-semibold text-slate-200 tabular-nums">
             {stats.middleOpen} M
           </div>
         </div>
@@ -127,30 +127,30 @@ export function CabinSeatMapView({
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Cabin Grid */}
-        <div className="lg:col-span-7 bg-[#18181B] border border-zinc-800 rounded-xl p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-zinc-800 text-xs text-zinc-400">
-            <div className="font-medium text-zinc-200">
+        <div className="lg:col-span-7 bg-[#0D1526] border border-[#1E2E4E] rounded-xl p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#1E2E4E] text-xs text-slate-400">
+            <div className="font-medium text-slate-200">
               3-3 Configuration (A/F Window · B/E Middle · C/D Aisle)
             </div>
             <div className="flex items-center gap-4">
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded bg-[#111114] border border-zinc-700 inline-block" />
+                <span className="w-3 h-3 rounded bg-[#0A1120] border border-[#1E2E4E] inline-block" />
                 Available
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded bg-[#E50914] inline-block" />
+                <span className="w-3 h-3 rounded bg-[#A50044] inline-block" />
                 Booked
               </span>
             </div>
           </div>
 
           {/* Column Headers */}
-          <div className="mt-4 grid grid-cols-[32px_1fr_1fr_1fr_24px_1fr_1fr_1fr] gap-1.5 text-center text-xs font-mono font-semibold text-zinc-400 pb-2">
+          <div className="mt-4 grid grid-cols-[32px_1fr_1fr_1fr_24px_1fr_1fr_1fr] gap-1.5 text-center text-xs font-mono font-semibold text-slate-400 pb-2">
             <span />
             {SEAT_COLUMNS.slice(0, 3).map((c) => (
               <span key={c.letter}>
                 {c.letter}{' '}
-                <span className="font-sans font-normal text-zinc-500">
+                <span className="font-sans font-normal text-slate-500">
                   ({c.type[0]})
                 </span>
               </span>
@@ -159,7 +159,7 @@ export function CabinSeatMapView({
             {SEAT_COLUMNS.slice(3, 6).map((c) => (
               <span key={c.letter}>
                 {c.letter}{' '}
-                <span className="font-sans font-normal text-zinc-500">
+                <span className="font-sans font-normal text-slate-500">
                   ({c.type[0]})
                 </span>
               </span>
@@ -185,9 +185,9 @@ export function CabinSeatMapView({
                     }`}
                     className={`h-8 rounded-md font-mono text-xs font-medium transition-colors tabular-nums ${
                       seat.isBooked
-                        ? 'bg-[#E50914] text-white hover:bg-[#F40612]'
-                        : 'bg-[#111114] text-zinc-300 border border-zinc-800 hover:border-zinc-500 hover:text-white'
-                    } ${isSelected ? 'ring-2 ring-offset-1 ring-offset-[#18181B] ring-white' : ''} ${
+                        ? 'bg-[#A50044] text-white hover:bg-[#BE0A54]'
+                        : 'bg-[#0A1120] text-slate-300 border border-[#1E2E4E] hover:border-[#1C6DD0] hover:text-white'
+                    } ${isSelected ? 'ring-2 ring-offset-1 ring-offset-[#0D1526] ring-[#EDBB00]' : ''} ${
                       dimmed ? 'opacity-20' : ''
                     }`}
                   >
@@ -201,13 +201,13 @@ export function CabinSeatMapView({
                   key={row}
                   className="grid grid-cols-[32px_1fr_1fr_1fr_24px_1fr_1fr_1fr] gap-1.5 items-center"
                 >
-                  <span className="font-mono text-xs text-zinc-500 text-right pr-1 tabular-nums">
+                  <span className="font-mono text-xs text-slate-500 text-right pr-1 tabular-nums">
                     {row}
                   </span>
                   {renderSeatBtn('A')}
                   {renderSeatBtn('B')}
                   {renderSeatBtn('C')}
-                  <span className="text-center text-zinc-700 text-xs select-none">
+                  <span className="text-center text-slate-700 text-xs select-none">
                     |
                   </span>
                   {renderSeatBtn('D')}
@@ -222,13 +222,13 @@ export function CabinSeatMapView({
         {/* Seat Inspector Panel */}
         <div className="lg:col-span-5 space-y-4">
           {!selectedSeat ? (
-            <div className="bg-[#18181B] border border-zinc-800 rounded-xl p-6 text-sm text-zinc-400">
+            <div className="bg-[#0D1526] border border-[#1E2E4E] rounded-xl p-6 text-sm text-slate-400">
               <h2 className="font-display text-base font-semibold text-white">
                 Seat Inspector
               </h2>
               <p className="mt-1.5">
                 Select any seat from the cabin map to verify its seat type (
-                <span className="font-medium text-zinc-200">
+                <span className="font-medium text-slate-200">
                   Window / Middle / Aisle
                 </span>
                 ) or view the assigned passenger booking.
@@ -236,21 +236,21 @@ export function CabinSeatMapView({
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="bg-[#18181B] border border-zinc-800 rounded-xl p-6">
+              <div className="bg-[#0D1526] border border-[#1E2E4E] rounded-xl p-6">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="text-xs text-zinc-400">Selected Seat</div>
-                    <div className="mt-0.5 font-mono text-2xl font-bold text-white tabular-nums">
+                    <div className="text-xs text-slate-400">Selected Seat</div>
+                    <div className="mt-0.5 font-mono text-2xl font-bold text-[#EDBB00] tabular-nums">
                       {selectedSeat.seatNumber}
                     </div>
-                    <div className="mt-1 text-xs text-zinc-400">
+                    <div className="mt-1 text-xs text-slate-400">
                       Row {selectedSeat.row} · {selectedSeat.seatType} Seat
                     </div>
                   </div>
                   <span
                     className={`text-xs font-semibold ${
                       selectedSeat.isBooked
-                        ? 'text-[#E50914]'
+                        ? 'text-[#FF4D88]'
                         : 'text-emerald-400'
                     }`}
                   >
@@ -259,7 +259,7 @@ export function CabinSeatMapView({
                 </div>
 
                 {!selectedSeat.isBooked && (
-                  <p className="mt-4 pt-4 border-t border-zinc-800 text-xs text-zinc-400">
+                  <p className="mt-4 pt-4 border-t border-[#1E2E4E] text-xs text-slate-400">
                     This {selectedSeat.seatType.toLowerCase()} seat is currently
                     open and eligible for automated allocation when booking.
                   </p>

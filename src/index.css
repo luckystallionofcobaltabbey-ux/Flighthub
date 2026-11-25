@@ -5,6 +5,18 @@
   --font-display: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-blau: #004d98;
+  --color-blau-bright: #1c6dd0;
+  --color-blau-deep: #002e5c;
+  --color-grana: #a50044;
+  --color-grana-bright: #cf115d;
+  --color-grana-deep: #6b002c;
+  --color-blaugrana-gold: #edbb00;
+  --color-iso-canvas: #070b14;
+  --color-iso-surface: #0d1526;
+  --color-iso-elevated: #121d33;
+  --color-iso-border: #1e2e4e;
 }
 
 @layer base {
@@ -14,13 +26,64 @@
 
   body {
     font-family: var(--font-sans);
-    background-color: #141414;
-    color: #f4f4f5;
+    background-color: #070b14;
+    color: #f1f5f9;
+    -webkit-tap-highlight-color: transparent;
   }
 
   h1, h2, h3, h4, .font-display {
     font-family: var(--font-display);
   }
+
+  /* Prevent Safari iOS auto-zoom when focusing inputs < 16px */
+  @supports (-webkit-touch-callout: none) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
+}
+
+/* Subtle 30-degree isometric architectural grid backdrop */
+.bg-isometric-grid {
+  background-color: #070b14;
+  background-image:
+    linear-gradient(
+      30deg,
+      rgba(0, 77, 152, 0.09) 12%,
+      transparent 12.5%,
+      transparent 87%,
+      rgba(0, 77, 152, 0.09) 87.5%,
+      rgba(0, 77, 152, 0.09)
+    ),
+    linear-gradient(
+      150deg,
+      rgba(165, 0, 68, 0.08) 12%,
+      transparent 12.5%,
+      transparent 87%,
+      rgba(165, 0, 68, 0.08) 87.5%,
+      rgba(165, 0, 68, 0.08)
+    ),
+    linear-gradient(
+      60deg,
+      rgba(237, 187, 0, 0.04) 25%,
+      transparent 25.5%,
+      transparent 75%,
+      rgba(237, 187, 0, 0.04) 75%,
+      rgba(237, 187, 0, 0.04)
+    );
+  background-size: 48px 84px;
+  background-position: 0 0, 0 0, 24px 42px;
+}
+
+/* Crisp isometric stepped elevation for hero & primary panels */
+.iso-depth {
+  box-shadow: 4px 4px 0 #004d98, 8px 8px 0 rgba(165, 0, 68, 0.55);
+}
+
+.iso-depth-sm {
+  box-shadow: 2px 2px 0 #004d98, 4px 4px 0 rgba(165, 0, 68, 0.5);
 }
 
 @keyframes gta-ken-burns {

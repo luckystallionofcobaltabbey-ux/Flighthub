@@ -3,6 +3,7 @@ import {
   Airline,
   AirportInfo,
   BookingRecord,
+  FareBreakdown,
   PassengerDraft,
   PaymentDetails,
   PreferenceStatus,
@@ -62,8 +63,7 @@ export function formatDurationMinutes(minutes: number): string {
 }
 
 /**
- * Computes distance and realistic jet flight duration between two airports,
- * varying by carrier cruise speed, climb/descent buffer, and prevailing jetstream direction.
+ * Computes distance, prevailing wind factor, and realistic jet flight duration between two airports.
  */
 export function calculateRouteMetrics(
   depCode: string,
@@ -73,6 +73,7 @@ export function calculateRouteMetrics(
   distanceKm: number;
   durationMinutes: number;
   durationFormatted: string;
+  windFuelMultiplier: number;
   depAirport?: AirportInfo;
   arrAirport?: AirportInfo;
 } {
@@ -84,6 +85,7 @@ export function calculateRouteMetrics(
       distanceKm: 0,
       durationMinutes: 180,
       durationFormatted: '3h 00m',
+      windFuelMultiplier: 1,
       depAirport,
       arrAirport,
     };
@@ -97,6 +99,7 @@ export function calculateRouteMetrics(
   );
 
   let rawMinutes = (distanceKm / cruiseSpeedKmh) * 60 + 35;
+  let windFuelMultiplier = 1;
 
   // Prevailing mid-latitude jetstream effect on long-haul east/west corridors
   if (distanceKm > 2500) {
@@ -104,8 +107,13 @@ export function calculateRouteMetrics(
     if (lonDelta > 180) lonDelta -= 360;
     if (lonDelta < -180) lonDelta += 360;
 
-    if (lonDelta > 35) rawMinutes *= 0.96; // Eastbound tailwind
-    else if (lonDelta < -35) rawMinutes *= 1.05; // Westbound headwind
+    if (lonDelta > 35) {
+      rawMinutes *= 0.96; // Eastbound tailwind reduces burn & flight time
+      windFuelMultiplier = 0.95;
+    } else if (lonDelta < -35) {
+      rawMinutes *= 1.05; // Westbound headwind increases burn & flight time
+      windFuelMultiplier = 1.08;
+    }
   }
 
   const rounded = Math.max(50, Math.round(rawMinutes / 5) * 5);
@@ -113,8 +121,84 @@ export function calculateRouteMetrics(
     distanceKm,
     durationMinutes: rounded,
     durationFormatted: formatDurationMinutes(rounded),
+    windFuelMultiplier,
     depAirport,
     arrAirport,
+  };
+}
+
+/**
+ * Dynamic fare engine factoring:
+ * - Carrier base slot/terminal fee
+ * - Tapered great-circle distance tariff (short, medium, long-haul bands)
+ * - Jet-A1 fuel surcharge adjusted by carrier fuel burn, route length & jetstream headwind/tailwind
+ * - International vs domestic airport navigation taxes & congestion fees
+ */
+export function calculateDynamicFare(
+  airline: Airline,
+  depCode: string,
+  arrCode: string
+): FareBreakdown {
+  const metrics = calculateRouteMetrics(
+    depCode,
+    arrCode,
+    airline.cruiseSpeedKmh
+  );
+  const distanceKm = metrics.distanceKm;
+
+  if (distanceKm <= 0) {
+    return {
+      baseFare: airline.baseFee,
+      distanceCharge: 0,
+      fuelSurcharge: 0,
+      airportTaxes: 450,
+      windFuelMultiplier: 1,
+      totalFare: airline.fare,
+      estimatedFuelLitres: 0,
+      distanceKm: 0,
+      isInternational: false,
+    };
+  }
+
+  // Tapered distance pricing: full rate up to 3000km, 82% for 3000-7000km, 68% beyond 7000km
+  const band1 = Math.min(distanceKm, 3000);
+  const band2 = Math.max(0, Math.min(distanceKm - 3000, 4000));
+  const band3 = Math.max(0, distanceKm - 7000);
+  const effectiveKm = band1 + band2 * 0.82 + band3 * 0.68;
+  const distanceCharge = Math.round(effectiveKm * airline.ratePerKm);
+
+  // Jet-A1 Fuel surcharge + climb/descent reserve + jetstream burn factor
+  const windFactor = metrics.windFuelMultiplier;
+  const fuelSurcharge = Math.round(
+    (distanceKm * airline.fuelSurchargePerKm + 260) * windFactor
+  );
+  const estimatedFuelLitres = Math.round(
+    (distanceKm * airline.fuelBurnLitresPerKm + 420) * windFactor
+  );
+
+  // Airport passenger service fees & air navigation charges
+  const isInternational = Boolean(
+    metrics.depAirport &&
+      metrics.arrAirport &&
+      metrics.depAirport.country !== metrics.arrAirport.country
+  );
+  const airportTaxes =
+    (isInternational ? 1480 : 480) + Math.round(distanceKm * 0.22);
+
+  const rawTotal =
+    airline.baseFee + distanceCharge + fuelSurcharge + airportTaxes;
+  const totalFare = Math.round(rawTotal / 10) * 10;
+
+  return {
+    baseFare: airline.baseFee,
+    distanceCharge,
+    fuelSurcharge,
+    airportTaxes,
+    windFuelMultiplier: windFactor,
+    totalFare,
+    estimatedFuelLitres,
+    distanceKm,
+    isInternational,
   };
 }
 
@@ -355,18 +439,18 @@ export function generateBookingId(
   const dateCompact = travelDate.replace(/-/g, '');
   const timeCompact = departureTime.replace(':', '');
   const suffix = String(passengerNumber).padStart(2, '0');
-  const baseId = `${airlineCode}${dateCompact}${timeCompact}${suffix}`;
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const randomTag = () => {
+    let out = '';
+    for (let i = 0; i < 4; i++) {
+      out += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return out;
+  };
 
-  if (!takenIds.has(baseId)) {
-    return baseId;
-  }
-
-  const micro = String(Date.now()).slice(-6);
-  let candidate = `${airlineCode}${dateCompact}${timeCompact}${micro}${suffix}`;
-  let counter = 1;
+  let candidate = `${airlineCode}${dateCompact}${timeCompact}${suffix}-${randomTag()}`;
   while (takenIds.has(candidate)) {
-    candidate = `${airlineCode}${dateCompact}${timeCompact}${micro}${counter}${suffix}`;
-    counter++;
+    candidate = `${airlineCode}${dateCompact}${timeCompact}${suffix}-${randomTag()}`;
   }
   return candidate;
 }
@@ -411,6 +495,11 @@ export function createBookingsTransaction(params: {
     departureAirport,
     arrivalAirport,
     airline.cruiseSpeedKmh
+  );
+  const fareBreakdown = calculateDynamicFare(
+    airline,
+    departureAirport,
+    arrivalAirport
   );
 
   const createdBookings: BookingRecord[] = [];
@@ -459,7 +548,8 @@ export function createBookingsTransaction(params: {
       arrivalTzLabel: flightTimes.arrivalTzLabel,
       durationMinutes: flightTimes.durationMinutes,
       distanceKm: flightTimes.distanceKm,
-      fare: airline.fare,
+      fare: fareBreakdown.totalFare,
+      fareBreakdown,
       payment,
       createdAt: new Date().toISOString(),
     };
@@ -523,9 +613,9 @@ export function buildSampleBookings(
   const res1 = createBookingsTransaction({
     seats: currentSeats,
     existingBookings,
-    airline: AIRLINES[2], // AeroNova AN
+    airline: AIRLINES[0], // Barcelona Coastal Airways (BC)
     departureAirport: 'DEL',
-    arrivalAirport: 'LHR',
+    arrivalAirport: 'BCN',
     travelDate: today,
     departureTime: '09:00',
     passengers: [
@@ -558,7 +648,7 @@ export function buildSampleBookings(
   const res2 = createBookingsTransaction({
     seats: res1.updatedSeats,
     existingBookings: res1.updatedBookings,
-    airline: AIRLINES[0], // SkyJet SJ
+    airline: AIRLINES[11], // Singapore Strait Airways (SS)
     departureAirport: 'BLR',
     arrivalAirport: 'SIN',
     travelDate: today,

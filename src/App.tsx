@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { User, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import {
+  Cloud,
+  CloudOff,
   Grid3X3,
   ListChecks,
+  LogIn,
+  LogOut,
   Menu,
-  Plane,
   Play,
   PlusCircle,
   Search,
   Terminal,
   Trash2,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import { BookTicketView } from './components/BookTicketView';
@@ -17,7 +23,25 @@ import { CancelTicketView } from './components/CancelTicketView';
 import { DeveloperPortalView } from './components/DeveloperPortalView';
 import { FlightFaresView } from './components/FlightFaresView';
 import { GtaLoadingScreen } from './components/GtaLoadingScreen';
+import { IsometricBlaugranaCube } from './components/IsometricMotif';
+import { OfflineIndicator } from './components/OfflineIndicator';
+import { PWAInstallButton } from './components/PWAInstallButton';
 import { ViewTicketsView } from './components/ViewTicketsView';
+import { auth, googleProvider } from './firebase';
+import {
+  clearAllBookingsInCloud,
+  clearEventsInCloud,
+  deleteBookingFromCloud,
+  deriveSeatsWithSharedState,
+  ensureUserWorkspace,
+  isDeveloperAccount,
+  migrateLegacyUserBookings,
+  subscribeCloudBookings,
+  subscribeCloudEvents,
+  subscribeSharedCabinSeats,
+  writeBookingsBatchToCloud,
+  writeEventToCloud,
+} from './services/firestoreSync';
 import {
   Airline,
   AppEventRecord,
@@ -35,6 +59,15 @@ import {
   createBookingsTransaction,
   createInitialSeats,
 } from './utils/flightEngine';
+import {
+  isSoundEnabled,
+  playBookingConfirmedSound,
+  playPaymentAuthorizedSound,
+  playPaymentDeclinedSound,
+  playTicketCancelledSound,
+  primeAudioContext,
+  setSoundEnabledPref,
+} from './utils/soundEffects';
 
 const STORAGE_BOOKINGS_KEY = 'flighthub_bookings_v1';
 const STORAGE_SEATS_KEY = 'flighthub_seats_v1';
@@ -123,6 +156,13 @@ export default function App() {
   const [bookings, setBookings] = useState<BookingRecord[]>(loadInitialBookings);
   const [seats, setSeats] = useState<SeatRecord[]>(loadInitialSeats);
   const [events, setEvents] = useState<AppEventRecord[]>(loadInitialEvents);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(isSoundEnabled);
+
+  const [cloudUser, setCloudUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [devToken, setDevToken] = useState<string | null>(null);
 
   const [preselectedAirlineCode, setPreselectedAirlineCode] = useState<
     string | null
@@ -132,6 +172,18 @@ export default function App() {
   >(null);
 
   const bootedRef = useRef(false);
+  const localBookingsRef = useRef<BookingRecord[]>(bookings);
+  const localEventsRef = useRef<AppEventRecord[]>(events);
+  const sharedOccupiedRef = useRef<string[]>([]);
+  const migratedUidRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    localBookingsRef.current = bookings;
+  }, [bookings]);
+
+  useEffect(() => {
+    localEventsRef.current = events;
+  }, [events]);
 
   const logEvent = useCallback(
     (
@@ -141,15 +193,152 @@ export default function App() {
     ) => {
       const nextEvent: AppEventRecord = {
         id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        actorEmail: auth.currentUser?.email ?? undefined,
+        actorRole: auth.currentUser
+          ? isDeveloperAccount(auth.currentUser)
+            ? 'developer'
+            : 'tester'
+          : undefined,
         type,
         timestamp: new Date().toISOString(),
         summary,
         metadata,
       };
       setEvents((prev) => [nextEvent, ...prev].slice(0, MAX_STORED_EVENTS));
+      if (auth.currentUser) {
+        void writeEventToCloud(auth.currentUser, nextEvent).catch(() => {
+          // Non-fatal telemetry write fallback
+        });
+      }
     },
     []
   );
+
+  useEffect(() => {
+    let unsubBookings: (() => void) | null = null;
+    let unsubEvents: (() => void) | null = null;
+    let unsubCabin: (() => void) | null = null;
+
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      if (unsubBookings) {
+        unsubBookings();
+        unsubBookings = null;
+      }
+      if (unsubEvents) {
+        unsubEvents();
+        unsubEvents = null;
+      }
+      if (unsubCabin) {
+        unsubCabin();
+        unsubCabin = null;
+      }
+
+      setCloudUser(user);
+      setAuthReady(true);
+      setSyncError(null);
+
+      if (!user) {
+        migratedUidRef.current = null;
+        sharedOccupiedRef.current = [];
+        return;
+      }
+
+      try {
+        await ensureUserWorkspace(user);
+        try {
+          await migrateLegacyUserBookings(user);
+        } catch {
+          // Legacy migration is best-effort and must not block live sync listeners
+        }
+
+        unsubCabin = subscribeSharedCabinSeats(
+          (occupiedSeats) => {
+            sharedOccupiedRef.current = occupiedSeats;
+            setSeats(
+              deriveSeatsWithSharedState(localBookingsRef.current, occupiedSeats)
+            );
+          },
+          (err) => {
+            setSyncError(
+              err instanceof Error ? err.message : 'Shared cabin sync error'
+            );
+          }
+        );
+
+        unsubBookings = subscribeCloudBookings(
+          user,
+          (cloudBookings) => {
+            if (migratedUidRef.current !== user.uid) {
+              migratedUidRef.current = user.uid;
+              const cloudIds = new Set(cloudBookings.map((b) => b.bookingId));
+              const occupiedSet = new Set([
+                ...sharedOccupiedRef.current,
+                ...cloudBookings.map((b) => b.seatBooked),
+              ]);
+              const localOnly = localBookingsRef.current.filter(
+                (b) =>
+                  !cloudIds.has(b.bookingId) && !occupiedSet.has(b.seatBooked)
+              );
+              if (localOnly.length > 0) {
+                void writeBookingsBatchToCloud(user, localOnly).catch((err) => {
+                  setSyncError(
+                    err instanceof Error
+                      ? err.message
+                      : 'Failed to upload local bookings to Firebase.'
+                  );
+                });
+              }
+            }
+            setBookings(cloudBookings);
+            setSeats(
+              deriveSeatsWithSharedState(
+                cloudBookings,
+                sharedOccupiedRef.current
+              )
+            );
+          },
+          (err) => {
+            setSyncError(
+              err instanceof Error ? err.message : 'Cloud sync error'
+            );
+          }
+        );
+
+        unsubEvents = subscribeCloudEvents(
+          user,
+          (cloudEvents) => {
+            setEvents(cloudEvents);
+          },
+          (err) => {
+            setSyncError(
+              err instanceof Error ? err.message : 'Telemetry sync error'
+            );
+          }
+        );
+      } catch (err) {
+        setSyncError(err instanceof Error ? err.message : 'Cloud setup failed');
+      }
+    });
+
+    return () => {
+      unsubAuth();
+      if (unsubBookings) unsubBookings();
+      if (unsubEvents) unsubEvents();
+      if (unsubCabin) unsubCabin();
+    };
+  }, []);
+
+  useEffect(() => {
+    const unlockAudio = () => {
+      primeAudioContext();
+    };
+    window.addEventListener('pointerdown', unlockAudio, { once: true, passive: true });
+    window.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('touchstart', unlockAudio);
+    };
+  }, []);
 
   useEffect(() => {
     if (bootedRef.current) return;
@@ -179,6 +368,17 @@ export default function App() {
     setShowIntroLoader(false);
   }, []);
 
+  const handleToggleSound = useCallback(() => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      setSoundEnabledPref(next);
+      if (next) {
+        playPaymentAuthorizedSound();
+      }
+      return next;
+    });
+  }, []);
+
   const handlePaymentAttempt = useCallback(
     (attempt: {
       status: 'authorized' | 'declined';
@@ -188,12 +388,14 @@ export default function App() {
       referenceId?: string;
     }) => {
       if (attempt.status === 'authorized') {
+        playPaymentAuthorizedSound();
         logEvent(
           'PAYMENT_AUTHORIZED',
           `Razorpay ${attempt.method} payment authorized (Rs.${attempt.amount.toLocaleString('en-IN')})`,
           attempt
         );
       } else {
+        playPaymentDeclinedSound();
         logEvent(
           'PAYMENT_DECLINED',
           `Razorpay ${attempt.method} payment declined (Rs.${attempt.amount.toLocaleString('en-IN')})`,
@@ -203,6 +405,44 @@ export default function App() {
     },
     [logEvent]
   );
+
+  const handleSignInCloud = useCallback(async () => {
+    setSyncBusy(true);
+    setSyncError(null);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      const code = (err as { code?: string })?.code ?? '';
+      const isIOSStandalone =
+        typeof window !== 'undefined' &&
+        (window.navigator as unknown as { standalone?: boolean }).standalone ===
+          true;
+      if (
+        isIOSStandalone &&
+        (code === 'auth/popup-blocked' ||
+          code === 'auth/operation-not-supported-in-this-environment')
+      ) {
+        setSyncError(
+          'iOS Home Screen blocked the Google popup. Allow popups in Safari settings or sign in via Safari tab first.'
+        );
+      } else {
+        setSyncError(
+          err instanceof Error ? err.message : 'Google sign-in cancelled'
+        );
+      }
+    } finally {
+      setSyncBusy(false);
+    }
+  }, []);
+
+  const handleSignOutCloud = useCallback(async () => {
+    setSyncBusy(true);
+    try {
+      await signOut(auth);
+    } finally {
+      setSyncBusy(false);
+    }
+  }, []);
 
   const handleConfirmBooking = (params: {
     airline: Airline;
@@ -221,6 +461,21 @@ export default function App() {
     setSeats(result.updatedSeats);
     setBookings(result.updatedBookings);
     setPreselectedAirlineCode(null);
+    playBookingConfirmedSound();
+
+    const activeCloudUser = auth.currentUser ?? cloudUser;
+    if (activeCloudUser) {
+      void writeBookingsBatchToCloud(
+        activeCloudUser,
+        result.createdBookings
+      ).catch((err) => {
+        setSyncError(
+          err instanceof Error
+            ? err.message
+            : 'Failed to sync booking to Firebase.'
+        );
+      });
+    }
 
     const totalPaid = result.createdBookings.reduce((sum, b) => sum + b.fare, 0);
     logEvent(
@@ -245,6 +500,21 @@ export default function App() {
     setSeats(result.updatedSeats);
     setBookings(result.updatedBookings);
     setCancelTargetBookingId(null);
+    playTicketCancelledSound();
+
+    const activeCloudUser = auth.currentUser ?? cloudUser;
+    if (activeCloudUser) {
+      void deleteBookingFromCloud(
+        activeCloudUser,
+        result.cancelledBooking
+      ).catch((err) => {
+        setSyncError(
+          err instanceof Error
+            ? err.message
+            : 'Failed to remove booking from Firebase.'
+        );
+      });
+    }
 
     logEvent(
       'TICKET_CANCELLED',
@@ -293,6 +563,18 @@ export default function App() {
     );
     setSeats(result.updatedSeats);
     setBookings(result.updatedBookings);
+    const activeCloudUser = auth.currentUser ?? cloudUser;
+    if (activeCloudUser && addedBookings.length > 0) {
+      void writeBookingsBatchToCloud(activeCloudUser, addedBookings).catch(
+        (err) => {
+          setSyncError(
+            err instanceof Error
+              ? err.message
+              : 'Failed to sync sample bookings to Firebase.'
+          );
+        }
+      );
+    }
     logEvent(
       'SAMPLE_DATA_LOADED',
       `Seeded ${addedBookings.length} sample reservations into active cabin`,
@@ -303,10 +585,22 @@ export default function App() {
   };
 
   const handleResetAll = () => {
-    const clearedCount = bookings.length;
+    const snapshot = [...bookings];
+    const clearedCount = snapshot.length;
     setBookings([]);
     setSeats(createInitialSeats());
     setCancelTargetBookingId(null);
+    playTicketCancelledSound();
+    const activeCloudUser = auth.currentUser ?? cloudUser;
+    if (activeCloudUser && snapshot.length > 0) {
+      void clearAllBookingsInCloud(activeCloudUser, snapshot).catch((err) => {
+        setSyncError(
+          err instanceof Error
+            ? err.message
+            : 'Failed to clear bookings in Firebase.'
+        );
+      });
+    }
     logEvent(
       'CABIN_RESET',
       `Cleared ${clearedCount} active reservations and reset all 180 seats`,
@@ -326,18 +620,19 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#141414] text-zinc-100 flex">
+    <div className="min-h-screen bg-[#070B14] bg-isometric-grid text-slate-100 flex">
       {showIntroLoader && <GtaLoadingScreen onComplete={handleLoaderComplete} />}
+      <OfflineIndicator />
 
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-[#0B0B0D] border-r border-zinc-800">
-        <div className="h-16 px-6 flex items-center gap-2.5 border-b border-zinc-800">
-          <Plane className="w-5 h-5 text-[#E50914] shrink-0" />
+      <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-[#090F1D] border-r border-[#1E2E4E]">
+        <div className="h-16 px-5 flex items-center gap-2.5 border-b border-[#1E2E4E]">
+          <IsometricBlaugranaCube className="w-7 h-7 shrink-0" />
           <span
             style={{ fontFamily: 'var(--font-brand)' }}
             className="text-2xl tracking-wider text-white whitespace-nowrap leading-none pt-0.5"
           >
-            FLIGHTHUB <span className="text-[#E50914]">LMTD</span>
+            FLIGHTHUB <span className="text-[#EDBB00]">LMTD</span>
           </span>
         </div>
 
@@ -352,20 +647,20 @@ export default function App() {
                 onClick={() => handleSelectTab(item.id)}
                 className={`w-full flex items-center justify-between px-3.5 py-2.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
                   active
-                    ? 'bg-[#E50914]/15 text-white border border-[#E50914]/40'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900 border border-transparent'
+                    ? 'bg-gradient-to-r from-[#004D98]/45 to-[#A50044]/35 text-white border border-[#1C6DD0]/70'
+                    : 'text-slate-400 hover:text-white hover:bg-[#121D33] border border-transparent'
                 }`}
               >
                 <span className="inline-flex items-center gap-2.5">
                   <Icon
                     className={`w-4 h-4 shrink-0 ${
-                      active ? 'text-[#E50914]' : ''
+                      active ? 'text-[#EDBB00]' : ''
                     }`}
                   />
                   <span>{item.label}</span>
                 </span>
                 {item.id === 'view' && bookings.length > 0 && (
-                  <span className="font-mono text-xs text-zinc-400 tabular-nums">
+                  <span className="font-mono text-xs text-slate-300 tabular-nums">
                     {bookings.length}
                   </span>
                 )}
@@ -374,36 +669,99 @@ export default function App() {
           })}
         </nav>
 
-        <div className="p-4 border-t border-zinc-800 space-y-3">
+        <div className="p-4 border-t border-[#1E2E4E] space-y-3">
           <div className="space-y-1.5 text-xs">
-            <div className="flex items-center justify-between text-zinc-400">
+            <div className="flex items-center justify-between text-slate-400">
               <span>Cabin Open</span>
               <span className="font-mono font-semibold text-white tabular-nums">
                 {openSeatsCount} / 180
               </span>
             </div>
-            <div className="flex items-center justify-between text-zinc-400">
+            <div className="flex items-center justify-between text-slate-400">
               <span>Active Bookings</span>
-              <span className="font-mono font-semibold text-white tabular-nums">
+              <span className="font-mono font-semibold text-[#EDBB00] tabular-nums">
                 {bookings.length}
               </span>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowIntroLoader(true)}
-            className="w-full py-1.5 px-3 text-xs font-medium text-zinc-300 hover:text-white border border-zinc-800 hover:border-zinc-700 bg-[#141414] rounded-lg transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
-          >
-            <Play className="w-3 h-3 text-[#E50914]" />
-            <span>Replay Intro</span>
-          </button>
+          {authReady &&
+            (cloudUser ? (
+              <div className="p-2.5 rounded-lg bg-[#0D1526] border border-[#1E2E4E] space-y-2">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="inline-flex items-center gap-1.5 text-emerald-400 font-medium truncate">
+                    <Cloud className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">
+                      {cloudUser.email ?? cloudUser.displayName ?? 'Cloud Sync'}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void handleSignOutCloud()}
+                    disabled={syncBusy}
+                    title="Sign out from cloud sync"
+                    className="p-1 text-slate-400 hover:text-white rounded shrink-0"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleSignInCloud()}
+                disabled={syncBusy}
+                className="w-full py-2 px-3 text-xs font-semibold text-white bg-[#0D1526] hover:bg-[#121D33] border border-[#1C6DD0]/70 rounded-lg transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap"
+              >
+                <LogIn className="w-3.5 h-3.5 text-[#EDBB00] shrink-0" />
+                <span>{syncBusy ? 'Connecting...' : 'Sign In to Cloud Sync'}</span>
+              </button>
+            ))}
+
+          {syncError && (
+            <p className="text-[11px] text-[#FF4D88] leading-snug">
+              {syncError}
+            </p>
+          )}
+
+          <PWAInstallButton variant="sidebar" />
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setShowIntroLoader(true)}
+              className="py-1.5 px-2.5 text-xs font-medium text-slate-300 hover:text-white border border-[#1E2E4E] hover:border-[#1C6DD0] bg-[#0D1526] rounded-lg transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+            >
+              <Play className="w-3 h-3 text-[#EDBB00] shrink-0" />
+              <span>Replay Intro</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleToggleSound}
+              aria-pressed={soundEnabled}
+              title={soundEnabled ? 'Mute UI audio cues' : 'Enable UI audio cues'}
+              className="py-1.5 px-2.5 text-xs font-medium text-slate-300 hover:text-white border border-[#1E2E4E] hover:border-[#1C6DD0] bg-[#0D1526] rounded-lg transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+            >
+              {soundEnabled ? (
+                <>
+                  <Volume2 className="w-3.5 h-3.5 text-[#60A5FA] shrink-0" />
+                  <span>Audio On</span>
+                </>
+              ) : (
+                <>
+                  <VolumeX className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <span>Muted</span>
+                </>
+              )}
+            </button>
+          </div>
 
           {bookings.length > 0 && (
             <button
               type="button"
               onClick={handleResetAll}
-              className="w-full py-1.5 px-3 text-xs font-medium text-zinc-400 hover:text-red-300 border border-zinc-800 hover:border-red-900/70 hover:bg-red-950/30 rounded-lg transition-colors whitespace-nowrap"
+              className="w-full py-1.5 px-3 text-xs font-medium text-slate-400 hover:text-[#FF4D88] border border-[#1E2E4E] hover:border-[#A50044] hover:bg-[#A50044]/15 rounded-lg transition-colors whitespace-nowrap"
             >
               Reset All Reservations
             </button>
@@ -418,22 +776,22 @@ export default function App() {
             className="fixed inset-0 bg-black/70"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <aside className="relative w-64 max-w-full bg-[#0B0B0D] h-full border-r border-zinc-800 flex flex-col z-10">
-            <div className="h-16 px-5 flex items-center justify-between border-b border-zinc-800">
+          <aside className="relative w-64 max-w-full bg-[#090F1D] h-full border-r border-[#1E2E4E] flex flex-col z-10">
+            <div className="h-16 px-5 flex items-center justify-between border-b border-[#1E2E4E]">
               <div className="flex items-center gap-2">
-                <Plane className="w-5 h-5 text-[#E50914]" />
+                <IsometricBlaugranaCube className="w-6 h-6" />
                 <span
                   style={{ fontFamily: 'var(--font-brand)' }}
                   className="text-xl tracking-wider text-white pt-0.5"
                 >
-                  FLIGHTHUB <span className="text-[#E50914]">LMTD</span>
+                  FLIGHTHUB <span className="text-[#EDBB00]">LMTD</span>
                 </span>
               </div>
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen(false)}
                 aria-label="Close navigation menu"
-                className="p-1.5 text-zinc-400 hover:text-white rounded-lg"
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -449,20 +807,20 @@ export default function App() {
                     onClick={() => handleSelectTab(item.id)}
                     className={`w-full flex items-center justify-between px-3.5 py-2.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
                       active
-                        ? 'bg-[#E50914]/15 text-white border border-[#E50914]/40'
-                        : 'text-zinc-400 hover:text-white hover:bg-zinc-900 border border-transparent'
+                        ? 'bg-gradient-to-r from-[#004D98]/45 to-[#A50044]/35 text-white border border-[#1C6DD0]/70'
+                        : 'text-slate-400 hover:text-white hover:bg-[#121D33] border border-transparent'
                     }`}
                   >
                     <span className="inline-flex items-center gap-2.5">
                       <Icon
                         className={`w-4 h-4 shrink-0 ${
-                          active ? 'text-[#E50914]' : ''
+                          active ? 'text-[#EDBB00]' : ''
                         }`}
                       />
                       <span>{item.label}</span>
                     </span>
                     {item.id === 'view' && bookings.length > 0 && (
-                      <span className="font-mono text-xs text-zinc-400 tabular-nums">
+                      <span className="font-mono text-xs text-slate-300 tabular-nums">
                         {bookings.length}
                       </span>
                     )}
@@ -470,6 +828,69 @@ export default function App() {
                 );
               })}
             </nav>
+            <div className="p-4 border-t border-[#1E2E4E] space-y-2.5">
+              {authReady &&
+                (cloudUser ? (
+                  <div className="p-2 rounded-lg bg-[#0D1526] border border-[#1E2E4E] flex items-center justify-between gap-2 text-xs">
+                    <span className="inline-flex items-center gap-1.5 text-emerald-400 font-medium truncate">
+                      <Cloud className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">
+                        {cloudUser.email ?? 'Cloud Synced'}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void handleSignOutCloud()}
+                      className="p-1 text-slate-400 hover:text-white shrink-0"
+                      title="Sign out"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handleSignInCloud()}
+                    disabled={syncBusy}
+                    className="w-full py-2 px-3 text-xs font-semibold text-white bg-[#0D1526] hover:bg-[#121D33] border border-[#1C6DD0]/70 rounded-lg transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap"
+                  >
+                    <LogIn className="w-3.5 h-3.5 text-[#EDBB00] shrink-0" />
+                    <span>Sign In to Cloud Sync</span>
+                  </button>
+                ))}
+              <PWAInstallButton variant="sidebar" />
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    setShowIntroLoader(true);
+                  }}
+                  className="py-1.5 px-2.5 text-xs font-medium text-slate-300 hover:text-white border border-[#1E2E4E] hover:border-[#1C6DD0] bg-[#0D1526] rounded-lg transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                >
+                  <Play className="w-3 h-3 text-[#EDBB00] shrink-0" />
+                  <span>Replay</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleToggleSound}
+                  aria-pressed={soundEnabled}
+                  className="py-1.5 px-2.5 text-xs font-medium text-slate-300 hover:text-white border border-[#1E2E4E] hover:border-[#1C6DD0] bg-[#0D1526] rounded-lg transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                >
+                  {soundEnabled ? (
+                    <>
+                      <Volume2 className="w-3.5 h-3.5 text-[#60A5FA] shrink-0" />
+                      <span>Audio On</span>
+                    </>
+                  ) : (
+                    <>
+                      <VolumeX className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <span>Muted</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </aside>
         </div>
       )}
@@ -477,21 +898,21 @@ export default function App() {
       {/* Main Content Shell */}
       <div className="flex-1 lg:pl-64 flex flex-col min-w-0">
         {/* Top Header Bar */}
-        <header className="h-16 bg-[#0B0B0D]/95 backdrop-blur-md border-b border-zinc-800 px-4 sm:px-8 flex items-center justify-between gap-8 sticky top-0 z-30">
+        <header className="min-h-16 pt-[env(safe-area-inset-top)] bg-[#090F1D]/95 backdrop-blur-md border-b border-[#1E2E4E] px-4 sm:px-8 flex items-center justify-between gap-4 sm:gap-8 sticky top-0 z-30">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
               aria-label="Open navigation menu"
-              className="lg:hidden p-2 -ml-2 text-zinc-400 hover:text-white rounded-lg"
+              className="lg:hidden p-2 -ml-2 text-slate-400 hover:text-white rounded-lg"
             >
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-2 text-sm truncate">
-              <span className="font-medium text-zinc-400 whitespace-nowrap">
+              <span className="font-medium text-slate-400 whitespace-nowrap">
                 FlightHub Lmtd
               </span>
-              <span className="text-zinc-600" aria-hidden="true">
+              <span className="text-slate-600" aria-hidden="true">
                 /
               </span>
               <span className="font-semibold text-white truncate">
@@ -500,16 +921,66 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            {authReady && !cloudUser && (
+              <button
+                type="button"
+                onClick={() => void handleSignInCloud()}
+                disabled={syncBusy}
+                className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-semibold text-white bg-[#0D1526] hover:bg-[#121D33] border border-[#1C6DD0]/80 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                title="Sign in with Google so bookings sync to Firebase"
+              >
+                <CloudOff className="w-3.5 h-3.5 text-[#EDBB00] shrink-0" />
+                <span>{syncBusy ? '...' : 'Sign In'}</span>
+              </button>
+            )}
+            <PWAInstallButton variant="header" />
             <button
               type="button"
               onClick={() => handleSelectTab('book')}
-              className="px-4 py-2 text-xs font-semibold text-white bg-[#E50914] hover:bg-[#F40612] rounded-lg transition-colors whitespace-nowrap shrink-0"
+              className="px-3.5 sm:px-4 py-2 text-xs font-semibold text-white bg-[#A50044] hover:bg-[#BE0A54] rounded-lg transition-colors whitespace-nowrap shrink-0"
             >
               New Ticket
             </button>
           </div>
         </header>
+
+        {/* Cross-Device Cloud Sync Status Strip */}
+        {authReady && (
+          <div className="bg-[#090F1D]/80 border-b border-[#1E2E4E] px-4 sm:px-8 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+            {cloudUser ? (
+              <div className="flex flex-wrap items-center gap-2 text-emerald-400">
+                <Cloud className="w-3.5 h-3.5 shrink-0" />
+                <span className="font-medium">
+                  {isDeveloperAccount(cloudUser)
+                    ? `Cloud Live · Developer (${cloudUser.email})`
+                    : `Cloud Synced · Beta Tester (${cloudUser.email})`}
+                </span>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2 text-amber-300">
+                <CloudOff className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  Local device mode only — tap{' '}
+                  <button
+                    type="button"
+                    onClick={() => void handleSignInCloud()}
+                    className="underline font-semibold text-white hover:text-[#EDBB00]"
+                  >
+                    Sign In with Google
+                  </button>{' '}
+                  so purchases sync to Firebase.
+                </span>
+              </div>
+            )}
+
+            {syncError && (
+              <span className="text-[#FF4D88] font-medium">
+                Sync Error: {syncError}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Main Viewport */}
         <main className="flex-1 px-4 sm:px-8 py-8 max-w-6xl w-full mx-auto">
@@ -563,8 +1034,20 @@ export default function App() {
               bookings={bookings}
               seats={seats}
               events={events}
+              devUnlocked={Boolean(devToken)}
+              userEmail={cloudUser?.email ?? null}
+              isDeveloperEmail={isDeveloperAccount(cloudUser)}
+              onUnlockDevPortal={(token) => setDevToken(token)}
+              onLockDevPortal={() => setDevToken(null)}
+              onSignInCloud={() => void handleSignInCloud()}
               onLoadSampleData={handleLoadSampleData}
-              onClearEvents={() => setEvents([])}
+              onClearEvents={() => {
+                const ids = localEventsRef.current.map((e) => e.id);
+                setEvents([]);
+                if (cloudUser && ids.length > 0) {
+                  void clearEventsInCloud(ids);
+                }
+              }}
             />
           )}
         </main>

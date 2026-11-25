@@ -16,6 +16,7 @@ import {
   generateRazorpayOrderId,
   generateRazorpayPaymentId,
 } from '../utils/flightEngine';
+import { primeAudioContext } from '../utils/soundEffects';
 
 interface RazorpayCheckoutModalProps {
   isOpen: boolean;
@@ -122,6 +123,7 @@ export function RazorpayCheckoutModal({
 
   const handleProceedToAuth = (e: React.FormEvent) => {
     e.preventDefault();
+    primeAudioContext();
     const err = validateMethodInputs();
     if (err) {
       setErrorMsg(err);
@@ -132,6 +134,7 @@ export function RazorpayCheckoutModal({
   };
 
   const handleCompletePayment = (simulateDecline = false) => {
+    primeAudioContext();
     setErrorMsg(null);
     setStage('processing');
 
@@ -194,35 +197,34 @@ export function RazorpayCheckoutModal({
       aria-modal="true"
       aria-label="Razorpay Mock Checkout"
     >
-      <div className="w-full max-w-2xl bg-[#11131A] border border-zinc-700 rounded-2xl overflow-hidden shadow-2xl text-zinc-100">
-        {/* Razorpay-style Top Merchant Banner */}
-        <div className="bg-[#0C244E] px-6 py-4 flex items-center justify-between gap-4 border-b border-blue-900/60">
+      <div className="w-full max-w-2xl bg-[#0D1526] border border-[#1E2E4E] iso-depth rounded-2xl overflow-hidden text-slate-100">
+        {/* Razorpay-style Top Merchant Banner in Blaugrana */}
+        <div className="bg-gradient-to-r from-[#004D98] via-[#0B2D66] to-[#A50044] px-6 py-4 flex items-center justify-between gap-4 border-b border-[#1E2E4E]">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-lg bg-[#E50914] flex items-center justify-center shrink-0">
-              <Plane className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-lg bg-[#070B14] border border-[#EDBB00]/50 flex items-center justify-center shrink-0">
+              <Plane className="w-5 h-5 text-[#EDBB00]" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="font-display text-base font-bold text-white truncate">
                   FlightHub Lmtd
                 </span>
-                <span className="text-[11px] font-medium text-blue-200 whitespace-nowrap">
+                <span className="text-[11px] font-medium text-blue-100 whitespace-nowrap">
                   · Razorpay Trusted
                 </span>
               </div>
-              <div className="text-xs text-blue-200/80 font-mono truncate">
-                {routeLabel} · {airlineName} · {passengerCount}{' '}
-                {passengerCount === 1 ? 'pax' : 'pax'}
+              <div className="text-xs text-blue-100/85 font-mono truncate">
+                {routeLabel} · {airlineName} · {passengerCount} pax
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-4 shrink-0">
             <div className="text-right">
-              <div className="text-[11px] text-blue-200/80 font-mono">
+              <div className="text-[11px] text-blue-100/85 font-mono">
                 {orderId}
               </div>
-              <div className="font-mono text-lg font-bold text-white tabular-nums">
+              <div className="font-mono text-lg font-bold text-[#EDBB00] tabular-nums">
                 Rs.{totalAmount.toLocaleString('en-IN')}
               </div>
             </div>
@@ -232,7 +234,7 @@ export function RazorpayCheckoutModal({
               onClick={onClose}
               disabled={stage === 'processing' || stage === 'success'}
               aria-label="Close Razorpay checkout"
-              className="p-1.5 text-blue-200 hover:text-white rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40"
+              className="p-1.5 text-blue-100 hover:text-white rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40"
             >
               <X className="w-5 h-5" />
             </button>
@@ -240,7 +242,7 @@ export function RazorpayCheckoutModal({
         </div>
 
         {/* Contact & Email Strip */}
-        <div className="px-6 py-3 bg-[#161923] border-b border-zinc-800 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <div className="px-6 py-3 bg-[#0A1120] border-b border-[#1E2E4E] grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           <div className="flex items-center gap-2">
             <span className="text-zinc-400 shrink-0">Phone:</span>
             <input
@@ -363,8 +365,8 @@ export function RazorpayCheckoutModal({
           <form onSubmit={handleProceedToAuth}>
             <div className="grid grid-cols-1 md:grid-cols-12">
               {/* Method Sidebar */}
-              <div className="md:col-span-4 bg-[#161923] border-b md:border-b-0 md:border-r border-zinc-800 p-3 space-y-1">
-                <div className="px-2.5 py-1.5 text-[11px] font-semibold text-zinc-400">
+              <div className="md:col-span-4 bg-[#0A1120] border-b md:border-b-0 md:border-r border-[#1E2E4E] p-3 space-y-1">
+                <div className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-400">
                   Payment Options
                 </div>
                 {(
@@ -407,20 +409,20 @@ export function RazorpayCheckoutModal({
                       }}
                       className={`w-full text-left px-3 py-2.5 rounded-lg flex items-start gap-2.5 transition-colors ${
                         active
-                          ? 'bg-blue-600/15 border border-blue-500/50 text-white'
-                          : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 border border-transparent'
+                          ? 'bg-[#004D98]/35 border border-[#1C6DD0] text-white'
+                          : 'text-slate-400 hover:bg-[#121D33] hover:text-slate-200 border border-transparent'
                       }`}
                     >
                       <Icon
                         className={`w-4 h-4 mt-0.5 shrink-0 ${
-                          active ? 'text-blue-400' : ''
+                          active ? 'text-[#EDBB00]' : ''
                         }`}
                       />
                       <div className="min-w-0">
                         <div className="text-xs font-semibold">
                           {item.label}
                         </div>
-                        <div className="text-[11px] text-zinc-500 truncate">
+                        <div className="text-[11px] text-slate-400 truncate">
                           {item.sub}
                         </div>
                       </div>
@@ -434,9 +436,9 @@ export function RazorpayCheckoutModal({
                 {errorMsg && (
                   <div
                     role="alert"
-                    className="flex items-start gap-2 px-3.5 py-2.5 text-xs text-red-200 bg-red-950/50 border border-red-900/70 rounded-lg"
+                    className="flex items-start gap-2 px-3.5 py-2.5 text-xs text-rose-100 bg-[#A50044]/25 border border-[#A50044] rounded-lg"
                   >
-                    <AlertCircle className="w-4 h-4 text-[#E50914] shrink-0 mt-0.5" />
+                    <AlertCircle className="w-4 h-4 text-[#FF4D88] shrink-0 mt-0.5" />
                     <span>{errorMsg}</span>
                   </div>
                 )}
@@ -626,15 +628,15 @@ export function RazorpayCheckoutModal({
                   </div>
                 )}
 
-                <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
-                    <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
+                <div className="pt-3 border-t border-[#1E2E4E] flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                    <ShieldCheck className="w-3.5 h-3.5 text-[#60A5FA]" />
                     <span>Secured by Razorpay Mock</span>
                   </div>
 
                   <button
                     type="submit"
-                    className="px-5 py-2.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors whitespace-nowrap"
+                    className="px-5 py-2.5 text-xs font-semibold text-white bg-[#A50044] hover:bg-[#BE0A54] rounded-lg transition-colors whitespace-nowrap"
                   >
                     Pay Rs.{totalAmount.toLocaleString('en-IN')}
                   </button>

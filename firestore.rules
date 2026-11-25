@@ -1,0 +1,385 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 0: Default-deny global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isEmailVerified() && (
+        (request.auth.token.email is string && request.auth.token.email.lower() == 'luckystallionofcobaltabbey@gmail.com') ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(userId) {
+      return isEmailVerified() && request.auth.uid == userId;
+    }
+
+    function parentWorkspaceExists(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId));
+    }
+
+    function expectedActorRole() {
+      return isAdmin() ? 'developer' : 'tester';
+    }
+
+    function isValidWorkspace(data, userId) {
+      return data.keys().hasAll(['ownerId', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'updatedAt'])
+        && data.ownerId is string
+        && data.ownerId == userId
+        && data.ownerId.size() <= 128
+        && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPrivateProfile(data, userId) {
+      return data.keys().hasAll(['ownerId', 'email', 'displayName', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'email', 'displayName', 'updatedAt'])
+        && data.ownerId is string
+        && data.ownerId == userId
+        && data.ownerId.size() <= 128
+        && data.email is string
+        && data.email.size() <= 254
+        && data.displayName is string
+        && data.displayName.size() <= 120
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCabinState(data) {
+      return data.keys().hasAll(['occupiedSeats', 'lastActorUid', 'updatedAt'])
+        && data.keys().hasOnly(['occupiedSeats', 'lastActorUid', 'updatedAt'])
+        && data.occupiedSeats is list
+        && data.occupiedSeats.size() <= 180
+        && (data.occupiedSeats.size() == 0 || (data.occupiedSeats[0] is string && data.occupiedSeats[0].size() <= 6))
+        && data.lastActorUid is string
+        && data.lastActorUid == request.auth.uid
+        && data.lastActorUid.size() <= 128
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFareBreakdown(fb) {
+      return fb is map
+        && fb.keys().hasAll([
+          'baseFare',
+          'distanceCharge',
+          'fuelSurcharge',
+          'airportTaxes',
+          'windFuelMultiplier',
+          'totalFare',
+          'estimatedFuelLitres',
+          'distanceKm',
+          'isInternational'
+        ])
+        && fb.keys().hasOnly([
+          'baseFare',
+          'distanceCharge',
+          'fuelSurcharge',
+          'airportTaxes',
+          'windFuelMultiplier',
+          'totalFare',
+          'estimatedFuelLitres',
+          'distanceKm',
+          'isInternational'
+        ])
+        && fb.baseFare is number && fb.baseFare >= 0
+        && fb.distanceCharge is number && fb.distanceCharge >= 0
+        && fb.fuelSurcharge is number && fb.fuelSurcharge >= 0
+        && fb.airportTaxes is number && fb.airportTaxes >= 0
+        && fb.windFuelMultiplier is number && fb.windFuelMultiplier > 0
+        && fb.totalFare is number && fb.totalFare > 0
+        && fb.estimatedFuelLitres is number && fb.estimatedFuelLitres >= 0
+        && fb.distanceKm is number && fb.distanceKm >= 0
+        && fb.isInternational is bool;
+    }
+
+    function isValidPayment(p) {
+      return p is map
+        && p.keys().hasAll([
+          'gateway',
+          'method',
+          'referenceId',
+          'orderId',
+          'accountMasked',
+          'contact',
+          'email',
+          'status',
+          'paidAt'
+        ])
+        && p.keys().hasOnly([
+          'gateway',
+          'method',
+          'referenceId',
+          'orderId',
+          'accountMasked',
+          'contact',
+          'email',
+          'status',
+          'paidAt'
+        ])
+        && p.gateway == 'Razorpay'
+        && p.method in ['UPI', 'Card', 'NetBanking', 'Wallet']
+        && p.referenceId is string && p.referenceId.size() >= 1 && p.referenceId.size() <= 64
+        && p.orderId is string && p.orderId.size() >= 1 && p.orderId.size() <= 64
+        && p.accountMasked is string && p.accountMasked.size() <= 80
+        && p.contact is string && p.contact.size() <= 40
+        && p.email is string && p.email.size() <= 254
+        && p.status == 'Paid'
+        && p.paidAt is string && p.paidAt.size() <= 40;
+    }
+
+    function isValidSharedBooking(data, bookingId) {
+      return data.keys().hasAll([
+        'ownerId',
+        'actorEmail',
+        'actorRole',
+        'bookingId',
+        'passengerName',
+        'citizenship',
+        'seatPreference',
+        'seatBooked',
+        'preferenceStatus',
+        'airline',
+        'airlineCode',
+        'departureDateTime',
+        'departureAirport',
+        'arrivalDateTime',
+        'arrivalAirport',
+        'fare',
+        'createdAt',
+        'serverCreatedAt'
+      ])
+      && data.keys().hasOnly([
+        'ownerId',
+        'actorEmail',
+        'actorRole',
+        'bookingId',
+        'passengerName',
+        'citizenship',
+        'seatPreference',
+        'seatBooked',
+        'preferenceStatus',
+        'airline',
+        'airlineCode',
+        'departureDateTime',
+        'departureAirport',
+        'departureTzLabel',
+        'arrivalDateTime',
+        'arrivalAirport',
+        'arrivalTzLabel',
+        'durationMinutes',
+        'distanceKm',
+        'fare',
+        'fareBreakdown',
+        'payment',
+        'createdAt',
+        'serverCreatedAt'
+      ])
+      && data.ownerId is string && data.ownerId == request.auth.uid && data.ownerId.size() <= 128
+      && request.auth.token.email is string && data.actorEmail is string && data.actorEmail.lower() == request.auth.token.email.lower() && data.actorEmail.size() <= 254
+      && data.actorRole is string && data.actorRole == expectedActorRole() && data.actorRole.size() <= 20
+      && data.bookingId is string && data.bookingId == bookingId && data.bookingId.size() <= 64 && data.bookingId.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.passengerName is string && data.passengerName.size() >= 1 && data.passengerName.size() <= 120
+      && data.citizenship is string && data.citizenship.size() >= 1 && data.citizenship.size() <= 80
+      && data.seatPreference in ['Window', 'Middle', 'Aisle', 'No Preference']
+      && data.seatBooked is string && data.seatBooked.size() <= 6 && data.seatBooked.matches('^([1-9]|[12][0-9]|30)[A-F]$')
+      && data.preferenceStatus is string && data.preferenceStatus.size() >= 1 && data.preferenceStatus.size() <= 80
+      && data.airline is string && data.airline.size() >= 1 && data.airline.size() <= 100
+      && data.airlineCode is string && data.airlineCode.size() >= 2 && data.airlineCode.size() <= 8 && data.airlineCode.matches('^[A-Z0-9]{2,6}$')
+      && data.departureDateTime is string && data.departureDateTime.size() <= 32
+      && data.departureAirport is string && data.departureAirport.size() == 3 && data.departureAirport.matches('^[A-Z]{3}$')
+      && (!data.keys().hasAny(['departureTzLabel']) || (data.departureTzLabel is string && data.departureTzLabel.size() <= 32))
+      && data.arrivalDateTime is string && data.arrivalDateTime.size() <= 32
+      && data.arrivalAirport is string && data.arrivalAirport.size() == 3 && data.arrivalAirport.matches('^[A-Z]{3}$')
+      && (!data.keys().hasAny(['arrivalTzLabel']) || (data.arrivalTzLabel is string && data.arrivalTzLabel.size() <= 32))
+      && (!data.keys().hasAny(['durationMinutes']) || (data.durationMinutes is number && data.durationMinutes > 0 && data.durationMinutes <= 3000))
+      && (!data.keys().hasAny(['distanceKm']) || (data.distanceKm is number && data.distanceKm >= 0 && data.distanceKm <= 25000))
+      && data.fare is number && data.fare > 0 && data.fare <= 5000000
+      && (!data.keys().hasAny(['fareBreakdown']) || isValidFareBreakdown(data.fareBreakdown))
+      && (!data.keys().hasAny(['payment']) || isValidPayment(data.payment))
+      && data.createdAt is string && data.createdAt.size() <= 40
+      && data.serverCreatedAt is timestamp;
+    }
+
+    function isValidSharedAppEvent(data, eventId) {
+      return data.keys().hasAll([
+        'ownerId',
+        'actorEmail',
+        'actorRole',
+        'id',
+        'type',
+        'timestamp',
+        'summary',
+        'serverCreatedAt'
+      ])
+      && data.keys().hasOnly([
+        'ownerId',
+        'actorEmail',
+        'actorRole',
+        'id',
+        'type',
+        'timestamp',
+        'summary',
+        'metadata',
+        'serverCreatedAt'
+      ])
+      && data.ownerId is string && data.ownerId == request.auth.uid && data.ownerId.size() <= 128
+      && request.auth.token.email is string && data.actorEmail is string && data.actorEmail.lower() == request.auth.token.email.lower() && data.actorEmail.size() <= 254
+      && data.actorRole is string && data.actorRole == expectedActorRole() && data.actorRole.size() <= 20
+      && data.id is string && data.id == eventId && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$')
+      && data.type in [
+        'SESSION_BOOT',
+        'BOOKING_CREATED',
+        'PAYMENT_AUTHORIZED',
+        'PAYMENT_DECLINED',
+        'TICKET_CANCELLED',
+        'TICKET_SEARCHED',
+        'SAMPLE_DATA_LOADED',
+        'CABIN_RESET'
+      ]
+      && data.timestamp is string && data.timestamp.size() <= 40
+      && data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 300
+      && (!data.keys().hasAny(['metadata']) || (data.metadata is map && data.metadata.keys().size() <= 15))
+      && data.serverCreatedAt is timestamp;
+    }
+
+    // Admin registry (read-only by admins)
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && isOwner(adminUid);
+      allow list, write: if false;
+    }
+
+    // Shared Zero-PII Cabin Occupancy State
+    match /cabin_state/{docId} {
+      allow get: if docId == 'shared' && isEmailVerified();
+      allow list: if false;
+      allow create: if docId == 'shared'
+        && isEmailVerified()
+        && isValidCabinState(incoming())
+        && incoming().updatedAt == request.time;
+      allow update: if docId == 'shared'
+        && isEmailVerified()
+        && isValidCabinState(incoming())
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['occupiedSeats', 'lastActorUid', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // Global Multi-Tester & Developer Bookings Pool
+    match /bookings/{bookingId} {
+      allow get: if isValidId(bookingId)
+        && (isAdmin() || (isEmailVerified() && existing().ownerId == request.auth.uid));
+      allow list: if isAdmin()
+        || (isEmailVerified() && resource.data.ownerId == request.auth.uid);
+      allow create: if isValidId(bookingId)
+        && isEmailVerified()
+        && isValidSharedBooking(incoming(), bookingId)
+        && incoming().serverCreatedAt == request.time
+        && parentWorkspaceExists(request.auth.uid);
+      allow update: if false;
+      allow delete: if isValidId(bookingId)
+        && (isAdmin() || (isEmailVerified() && existing().ownerId == request.auth.uid));
+    }
+
+    // Global Multi-Tester & Developer Telemetry Events Pool
+    match /events/{eventId} {
+      allow get: if isValidId(eventId)
+        && (isAdmin() || (isEmailVerified() && existing().ownerId == request.auth.uid));
+      allow list: if isAdmin()
+        || (isEmailVerified() && resource.data.ownerId == request.auth.uid);
+      allow create: if isValidId(eventId)
+        && isEmailVerified()
+        && isValidSharedAppEvent(incoming(), eventId)
+        && incoming().serverCreatedAt == request.time
+        && parentWorkspaceExists(request.auth.uid);
+      allow update: if false;
+      allow delete: if isValidId(eventId)
+        && (isAdmin() || (isEmailVerified() && existing().ownerId == request.auth.uid));
+    }
+
+    // Root Workspace Document (no PII stored here)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidWorkspace(incoming(), userId)
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidWorkspace(incoming(), userId)
+        && incoming().ownerId == existing().ownerId
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['updatedAt']);
+      allow delete: if false;
+
+      // Split Collection: Private PII Profile
+      match /private/{docId} {
+        allow get: if isValidId(userId) && docId == 'profile' && isOwner(userId);
+        allow list: if false;
+        allow create: if isValidId(userId)
+          && docId == 'profile'
+          && isOwner(userId)
+          && isValidPrivateProfile(incoming(), userId)
+          && incoming().updatedAt == request.time
+          && parentWorkspaceExists(userId);
+        allow update: if isValidId(userId)
+          && docId == 'profile'
+          && isOwner(userId)
+          && isValidPrivateProfile(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'updatedAt']);
+        allow delete: if false;
+      }
+
+      // Legacy per-user subcollections (read/delete only for seamless migration)
+      match /bookings/{bookingId} {
+        allow get: if isValidId(userId)
+          && isValidId(bookingId)
+          && (isAdmin() || (isOwner(userId) && existing().ownerId == request.auth.uid));
+        allow list: if isOwner(userId)
+          && resource.data.ownerId == request.auth.uid;
+        allow create, update: if false;
+        allow delete: if isValidId(userId)
+          && isValidId(bookingId)
+          && (isAdmin() || (isOwner(userId) && existing().ownerId == request.auth.uid));
+      }
+
+      match /events/{eventId} {
+        allow get: if isValidId(userId)
+          && isValidId(eventId)
+          && (isAdmin() || (isOwner(userId) && existing().ownerId == request.auth.uid));
+        allow list: if isOwner(userId)
+          && resource.data.ownerId == request.auth.uid;
+        allow create, update: if false;
+        allow delete: if isValidId(userId)
+          && isValidId(eventId)
+          && (isAdmin() || (isOwner(userId) && existing().ownerId == request.auth.uid));
+      }
+    }
+  }
+}
