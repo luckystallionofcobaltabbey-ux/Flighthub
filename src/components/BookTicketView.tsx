@@ -4,10 +4,13 @@ import {
   ArrowLeftRight,
   CheckCircle2,
   Clock,
+  Cloud,
   Fuel,
+  LogIn,
   Minus,
   Plus,
   Star,
+  X,
 } from 'lucide-react';
 import {
   AIRLINES,
@@ -40,6 +43,10 @@ import { TicketCard } from './TicketCard';
 interface BookTicketViewProps {
   seats: SeatRecord[];
   preselectedAirlineCode?: string | null;
+  authReady: boolean;
+  isCloudSignedIn: boolean;
+  syncBusy: boolean;
+  onSignInCloud: () => Promise<boolean>;
   onConfirmBooking: (params: {
     airline: Airline;
     departureAirport: string;
@@ -80,6 +87,10 @@ function createPassenger(index: number): PassengerDraft {
 export function BookTicketView({
   seats,
   preselectedAirlineCode,
+  authReady,
+  isCloudSignedIn,
+  syncBusy,
+  onSignInCloud,
   onConfirmBooking,
   onPaymentAttempt,
   onNavigateToView,
@@ -99,6 +110,7 @@ export function BookTicketView({
   const [passengers, setPassengers] = useState<PassengerDraft[]>([
     createPassenger(1),
   ]);
+  const [signInPromptOpen, setSignInPromptOpen] = useState(false);
   const [razorpayOpen, setRazorpayOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmedTickets, setConfirmedTickets] = useState<
@@ -225,6 +237,23 @@ export function BookTicketView({
       return;
     }
     setErrorMsg(null);
+    if (authReady && !isCloudSignedIn) {
+      setSignInPromptOpen(true);
+      return;
+    }
+    setRazorpayOpen(true);
+  };
+
+  const handleSignInAndContinue = async () => {
+    const signedIn = await onSignInCloud();
+    if (signedIn) {
+      setSignInPromptOpen(false);
+      setRazorpayOpen(true);
+    }
+  };
+
+  const handleContinueLocalMode = () => {
+    setSignInPromptOpen(false);
     setRazorpayOpen(true);
   };
 
@@ -365,6 +394,71 @@ export function BookTicketView({
         onPaymentAttempt={onPaymentAttempt}
       />
 
+      {signInPromptOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="signin-before-booking-title"
+        >
+          <div className="w-full max-w-md bg-[#0D1526] border border-[#1E2E4E] iso-depth rounded-2xl p-6 space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#004D98]/30 border border-[#1C6DD0]/60 flex items-center justify-center shrink-0">
+                  <Cloud className="w-5 h-5 text-[#EDBB00]" />
+                </div>
+                <div>
+                  <h2
+                    id="signin-before-booking-title"
+                    className="font-display text-lg font-bold text-white"
+                  >
+                    Sign in before booking
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-300 leading-relaxed">
+                    Sign in with Google before checkout so your seats reserve
+                    globally and your booking syncs to Firebase and the Developer
+                    Portal.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSignInPromptOpen(false)}
+                aria-label="Close sign-in prompt"
+                className="p-1 text-slate-400 hover:text-white rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                onClick={() => void handleSignInAndContinue()}
+                disabled={syncBusy}
+                className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-gradient-to-r from-[#004D98] to-[#A50044] hover:from-[#1C6DD0] hover:to-[#BE0A54] rounded-xl transition-all inline-flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <LogIn className="w-4 h-4 text-[#EDBB00]" />
+                <span>
+                  {syncBusy
+                    ? 'Connecting to Google...'
+                    : 'Sign In with Google & Pay'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleContinueLocalMode}
+                disabled={syncBusy}
+                className="w-full py-2 px-4 text-xs font-medium text-slate-300 hover:text-white bg-[#0A1120] border border-[#1E2E4E] hover:border-[#1C6DD0] rounded-xl transition-colors"
+              >
+                Continue without signing in (local device only)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Isometric Blaugrana Hero Banner */}
       <div className="relative rounded-xl overflow-hidden border border-[#1E2E4E] bg-[#0D1526] iso-depth">
         <div className="relative h-44 sm:h-52 w-full bg-gradient-to-r from-[#002855] via-[#0D1526] to-[#4A001E]">
@@ -396,6 +490,27 @@ export function BookTicketView({
           </div>
         </div>
       </div>
+
+      {authReady && !isCloudSignedIn && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 bg-[#0D1526] border border-[#1C6DD0]/70 rounded-xl">
+          <div className="flex items-start gap-2.5 text-xs sm:text-sm text-slate-200">
+            <Cloud className="w-4 h-4 text-[#EDBB00] shrink-0 mt-0.5" />
+            <span>
+              <strong className="text-white">Sign in before booking</strong>{' '}
+              with Google to sync your tickets to Firebase across devices.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void onSignInCloud()}
+            disabled={syncBusy}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#004D98] hover:bg-[#1C6DD0] rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-60"
+          >
+            <LogIn className="w-3.5 h-3.5 text-[#EDBB00]" />
+            <span>{syncBusy ? 'Connecting...' : 'Sign In with Google'}</span>
+          </button>
+        </div>
+      )}
 
       {errorMsg && (
         <div

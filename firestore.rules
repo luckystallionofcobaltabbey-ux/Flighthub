@@ -29,7 +29,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isEmailVerified() && (
-        (request.auth.token.email is string && request.auth.token.email.lower() == 'luckystallionofcobaltabbey@gmail.com') ||
+        (request.auth.token.email is string && hashing.sha256(request.auth.token.email.lower().toUtf8()).toHexString().lower() == 'aab3ebc6f3c860051d4b23dac37cfdec75892f6bb63b2d325eb2843ee8fc6218') ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }

@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -139,6 +140,8 @@ async function startServer() {
     res.json({ ok: true });
   });
 
+  const httpServer = http.createServer(app);
+
   if (IS_PRODUCTION) {
     const distDir = path.resolve(__dirname, 'dist');
     app.use(express.static(distDir, { extensions: ['html'] }));
@@ -151,15 +154,22 @@ async function startServer() {
       }
     });
   } else {
+    const disableWatch =
+      process.env.DISABLE_HMR === 'true' ||
+      Boolean(process.env.K_SERVICE || process.env.APP_URL);
     const { createServer } = await import('vite');
     const vite = await createServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ws: { server: httpServer },
+        watch: disableWatch ? null : undefined,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`FlightHub Lmtd server listening on port ${PORT}`);
   });
 }

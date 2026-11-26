@@ -19,7 +19,6 @@ import {
   AppEventRecord,
   AppEventType,
   BookingRecord,
-  DEVELOPER_ADMIN_EMAIL,
   PaymentMethod,
   SeatRecord,
 } from '../types/flighthub';
@@ -498,8 +497,8 @@ export function DeveloperPortalView({
       {!isDeveloperEmail && (
         <div className="p-4 rounded-xl bg-[#0D1526] border border-[#EDBB00]/50 flex flex-wrap items-center justify-between gap-3">
           <div className="text-xs text-slate-300">
-            Currently viewing {userEmail ? `tester scope (${userEmail})` : 'local device data'}. Sign in with developer email{' '}
-            <span className="font-mono text-[#EDBB00]">{DEVELOPER_ADMIN_EMAIL}</span> to aggregate bookings &amp; telemetry from all beta testers.
+            Currently viewing {userEmail ? `tester scope (${userEmail})` : 'local device data'}. Sign in with your{' '}
+            <span className="font-semibold text-[#EDBB00]">Developer Google account</span> to aggregate bookings &amp; telemetry from all beta testers.
           </div>
           <button
             type="button"

@@ -84,7 +84,8 @@ export interface PaymentDetails {
   paidAt: string;
 }
 
-export const DEVELOPER_ADMIN_EMAIL = 'luckystallionofcobaltabbey@gmail.com';
+export const DEVELOPER_ADMIN_EMAIL_SHA256 =
+  'aab3ebc6f3c860051d4b23dac37cfdec75892f6bb63b2d325eb2843ee8fc6218';
 
 export interface BookingRecord {
   bookingId: string;

@@ -33,9 +33,10 @@ FlightHub Lmtd supports concurrent testing across multiple phones/browsers using
    - New bookings and cancellations sync to Firestore in real time, occupy/release seats globally in `cabin_state/shared`, and remain isolated to that tester's own **View Tickets** view.
    - If a user is not signed in, the app stays in local device mode (`localStorage`) until they sign in.
 
-2. **Developer Admin (`luckystallionofcobaltabbey@gmail.com`)**
-   - Sign in with Google using the developer account (`Cloud Live · Developer`) and open the **Developer Portal** tab.
+2. **Developer Admin (Hashed Admin Verification)**
+   - Sign in with Google using the configured Developer Admin account (`Cloud Live · Developer`) and open the **Developer Portal** tab.
    - Enter the server-verified Developer PIN to unlock global cross-tester booking aggregation, unique beta tester metrics, live event telemetry, and analytics export.
+   - Sensitive local storage records (`bookings` and `events`) are encrypted at rest with Web Crypto `AES-256-GCM`, and admin email matching uses SHA-256 digests so no personal email is stored in plaintext.
 
 ---
 
@@ -147,3 +148,18 @@ npm run build
 # Start production server (Node 22+ native TS strip-types)
 npm run start
 ```
+
+---
+
+## Public Release & GitHub Setup
+
+1. **Secrets & Environment:** Never commit `.env` files. Set `DEV_PORTAL_PIN` and `SESSION_SECRET` in your hosting provider's Secrets / Environment panel before making the app public.
+2. **Firebase Self-Hosting:** If running on your own domain or local host, add that domain under **Firebase Console → Authentication → Settings → Authorized domains**, and deploy `firestore.rules` to your project.
+3. **Node Runtime:** Requires Node.js `22.6+` (for `node server.ts` TypeScript execution) or `npm run dev` via `tsx`.
+
+---
+
+## License
+
+Released under the [MIT License](./LICENSE).
+

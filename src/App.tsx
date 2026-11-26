@@ -60,6 +60,10 @@ import {
   createInitialSeats,
 } from './utils/flightEngine';
 import {
+  loadEncryptedLocalJson,
+  saveEncryptedLocalJson,
+} from './utils/cryptoVault';
+import {
   isSoundEnabled,
   playBookingConfirmedSound,
   playPaymentAuthorizedSound,
@@ -74,24 +78,31 @@ const STORAGE_SEATS_KEY = 'flighthub_seats_v1';
 const STORAGE_EVENTS_KEY = 'flighthub_events_v1';
 const MAX_STORED_EVENTS = 200;
 
-function loadInitialBookings(): BookingRecord[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_BOOKINGS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (b): b is BookingRecord =>
-        Boolean(b) &&
-        typeof b.bookingId === 'string' &&
-        typeof b.passengerName === 'string' &&
-        typeof b.departureDateTime === 'string' &&
-        typeof b.arrivalDateTime === 'string' &&
-        typeof b.fare === 'number'
-    );
-  } catch {
-    return [];
-  }
+function sanitizeBookingArray(parsed: unknown): BookingRecord[] {
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(
+    (b): b is BookingRecord =>
+      Boolean(b) &&
+      typeof b.bookingId === 'string' &&
+      typeof b.passengerName === 'string' &&
+      typeof b.departureDateTime === 'string' &&
+      typeof b.arrivalDateTime === 'string' &&
+      typeof b.fare === 'number'
+  );
+}
+
+function sanitizeEventArray(parsed: unknown): AppEventRecord[] {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter(
+      (e): e is AppEventRecord =>
+        Boolean(e) &&
+        typeof e.id === 'string' &&
+        typeof e.type === 'string' &&
+        typeof e.timestamp === 'string' &&
+        typeof e.summary === 'string'
+    )
+    .slice(0, MAX_STORED_EVENTS);
 }
 
 function loadInitialSeats(): SeatRecord[] {
@@ -114,27 +125,6 @@ function loadInitialSeats(): SeatRecord[] {
   }
 }
 
-function loadInitialEvents(): AppEventRecord[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_EVENTS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (e): e is AppEventRecord =>
-          Boolean(e) &&
-          typeof e.id === 'string' &&
-          typeof e.type === 'string' &&
-          typeof e.timestamp === 'string' &&
-          typeof e.summary === 'string'
-      )
-      .slice(0, MAX_STORED_EVENTS);
-  } catch {
-    return [];
-  }
-}
-
 const NAV_ITEMS: Array<{
   id: WorkspaceTab;
   label: string;
@@ -153,9 +143,10 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('book');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const [bookings, setBookings] = useState<BookingRecord[]>(loadInitialBookings);
+  const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [seats, setSeats] = useState<SeatRecord[]>(loadInitialSeats);
-  const [events, setEvents] = useState<AppEventRecord[]>(loadInitialEvents);
+  const [events, setEvents] = useState<AppEventRecord[]>([]);
+  const [localHydrated, setLocalHydrated] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(isSoundEnabled);
 
   const [cloudUser, setCloudUser] = useState<User | null>(null);
@@ -176,6 +167,35 @@ export default function App() {
   const localEventsRef = useRef<AppEventRecord[]>(events);
   const sharedOccupiedRef = useRef<string[]>([]);
   const migratedUidRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const [rawBookings, rawEvents] = await Promise.all([
+        loadEncryptedLocalJson<unknown>(STORAGE_BOOKINGS_KEY),
+        loadEncryptedLocalJson<unknown>(STORAGE_EVENTS_KEY),
+      ]);
+      if (!active) return;
+      if (!auth.currentUser) {
+        const cleanBookings = sanitizeBookingArray(rawBookings);
+        const cleanEvents = sanitizeEventArray(rawEvents);
+        if (cleanBookings.length > 0) {
+          localBookingsRef.current = cleanBookings;
+          setBookings(cleanBookings);
+        }
+        if (cleanEvents.length > 0) {
+          localEventsRef.current = cleanEvents;
+          setEvents((prev) =>
+            prev.length > 0 ? [...prev, ...cleanEvents].slice(0, MAX_STORED_EVENTS) : cleanEvents
+          );
+        }
+      }
+      setLocalHydrated(true);
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     localBookingsRef.current = bookings;
@@ -341,23 +361,24 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (bootedRef.current) return;
+    if (!localHydrated || bootedRef.current) return;
     bootedRef.current = true;
     logEvent('SESSION_BOOT', 'FlightHub Lmtd client workspace initialized', {
       activeBookings: bookings.length,
       openSeats: seats.filter((s) => !s.isBooked).length,
     });
-  }, [bookings, seats, logEvent]);
+  }, [localHydrated, bookings, seats, logEvent]);
 
   useEffect(() => {
+    if (!localHydrated) return;
+    void saveEncryptedLocalJson(STORAGE_BOOKINGS_KEY, bookings);
+    void saveEncryptedLocalJson(STORAGE_EVENTS_KEY, events);
     try {
-      localStorage.setItem(STORAGE_BOOKINGS_KEY, JSON.stringify(bookings));
       localStorage.setItem(STORAGE_SEATS_KEY, JSON.stringify(seats));
-      localStorage.setItem(STORAGE_EVENTS_KEY, JSON.stringify(events));
     } catch {
       // Storage quota or privacy mode fallback
     }
-  }, [bookings, seats, events]);
+  }, [localHydrated, bookings, seats, events]);
 
   const openSeatsCount = useMemo(
     () => seats.filter((s) => !s.isBooked).length,
@@ -406,11 +427,12 @@ export default function App() {
     [logEvent]
   );
 
-  const handleSignInCloud = useCallback(async () => {
+  const handleSignInCloud = useCallback(async (): Promise<boolean> => {
     setSyncBusy(true);
     setSyncError(null);
     try {
       await signInWithPopup(auth, googleProvider);
+      return true;
     } catch (err) {
       const code = (err as { code?: string })?.code ?? '';
       const isIOSStandalone =
@@ -430,6 +452,7 @@ export default function App() {
           err instanceof Error ? err.message : 'Google sign-in cancelled'
         );
       }
+      return false;
     } finally {
       setSyncBusy(false);
     }
@@ -989,6 +1012,10 @@ export default function App() {
               key={preselectedAirlineCode ?? 'default'}
               seats={seats}
               preselectedAirlineCode={preselectedAirlineCode}
+              authReady={authReady}
+              isCloudSignedIn={Boolean(cloudUser)}
+              syncBusy={syncBusy}
+              onSignInCloud={handleSignInCloud}
               onConfirmBooking={handleConfirmBooking}
               onPaymentAttempt={handlePaymentAttempt}
               onNavigateToView={() => handleSelectTab('view')}

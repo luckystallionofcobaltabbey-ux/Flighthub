@@ -16,20 +16,25 @@ import {
 import {
   AppEventRecord,
   BookingRecord,
-  DEVELOPER_ADMIN_EMAIL,
+  DEVELOPER_ADMIN_EMAIL_SHA256,
   FareBreakdown,
   PaymentDetails,
   SeatRecord,
 } from '../types/flighthub';
+import { sha256Hex } from '../utils/cryptoVault';
 import { createInitialSeats } from '../utils/flightEngine';
 import { OperationType, db, handleFirestoreError } from '../firebase';
 
 export function isDeveloperAccount(user: User | null): boolean {
-  if (!user?.email) return false;
-  return (
-    user.email.trim().toLowerCase() === DEVELOPER_ADMIN_EMAIL.toLowerCase() &&
-    user.emailVerified
-  );
+  if (!user?.email || !user.emailVerified) return false;
+  const normalized = user.email.trim().toLowerCase();
+  const envOverride = (
+    import.meta.env.VITE_DEVELOPER_ADMIN_EMAIL as string | undefined
+  )
+    ?.trim()
+    .toLowerCase();
+  if (envOverride && normalized === envOverride) return true;
+  return sha256Hex(normalized) === DEVELOPER_ADMIN_EMAIL_SHA256;
 }
 
 function clampStr(val: string | undefined, max: number): string {
